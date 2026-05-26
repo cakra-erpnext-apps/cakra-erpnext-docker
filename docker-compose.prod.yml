@@ -1,0 +1,158 @@
+services:
+  mariadb:
+    image: mariadb:10.8
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    restart: unless-stopped
+
+  redis-cache:
+    image: redis:alpine
+    restart: unless-stopped
+
+  redis-queue:
+    image: redis:alpine
+    restart: unless-stopped
+
+  redis-socketio:
+    image: redis:alpine
+    restart: unless-stopped
+
+  configurator:
+    image: cakra-erpnext:prod
+    build:
+      context: .
+      args:
+        FRAPPE_REPO: ${FRAPPE_REPO:-https://github.com/cakra-erpnext-apps/frappe}
+        FRAPPE_BRANCH: ${FRAPPE_BRANCH:-version-16}
+    command: >
+      bash -c "init-site.sh build-assets.sh && echo configured"
+    environment:
+      SITE_NAME: ${SITE_NAME:?SITE_NAME is required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      REDIS_CACHE: redis://redis-cache:6379
+      REDIS_QUEUE: redis://redis-queue:6379
+      REDIS_SOCKETIO: redis://redis-socketio:6379
+      SOCKETIO_PORT: 9000
+      INSTALL_APPS: ${INSTALL_APPS:-erpnext,hrms,erpnext_custom,crm,helpdesk,raven,gameplan,telephony}
+      BUILD_APPS: ${BUILD_APPS:-frappe,erpnext,hrms,crm,helpdesk,raven,gameplan,telephony}
+      SKIP_BUILD_APPS: ${SKIP_BUILD_APPS:-erpnext_custom}
+      ASSET_STRICT: ${ASSET_STRICT:-1}
+    volumes:
+      - bench-sites:/home/frappe/frappe-bench/sites
+      - bench-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      - mariadb
+      - redis-cache
+      - redis-queue
+      - redis-socketio
+    restart: "no"
+
+  backend:
+    image: cakra-erpnext:prod
+    command: >
+      bash -c "cd /home/frappe/frappe-bench &&
+      ./env/bin/gunicorn
+      --chdir=/home/frappe/frappe-bench/sites
+      --bind=0.0.0.0:8000
+      --threads=4
+      --workers=2
+      --worker-class=gthread
+      --worker-tmp-dir=/dev/shm
+      --timeout=120
+      frappe.app:application"
+    volumes:
+      - bench-sites:/home/frappe/frappe-bench/sites
+      - bench-logs:/home/frappe/frappe-bench/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  websocket:
+    image: cakra-erpnext:prod
+    command: >
+      bash -c "cd /home/frappe/frappe-bench && node apps/frappe/socketio.js"
+    volumes:
+      - bench-sites:/home/frappe/frappe-bench/sites
+      - bench-logs:/home/frappe/frappe-bench/logs
+    ports:
+      - "9000:9000"
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+      redis-socketio:
+        condition: service_started
+    restart: unless-stopped
+
+  queue-short:
+    image: cakra-erpnext:prod
+    command: >
+      bash -c "cd /home/frappe/frappe-bench && bench worker --queue short"
+    volumes:
+      - bench-sites:/home/frappe/frappe-bench/sites
+      - bench-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+      redis-queue:
+        condition: service_started
+    restart: unless-stopped
+
+  queue-default:
+    image: cakra-erpnext:prod
+    command: >
+      bash -c "cd /home/frappe/frappe-bench && bench worker --queue default"
+    volumes:
+      - bench-sites:/home/frappe/frappe-bench/sites
+      - bench-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+      redis-queue:
+        condition: service_started
+    restart: unless-stopped
+
+  queue-long:
+    image: cakra-erpnext:prod
+    command: >
+      bash -c "cd /home/frappe/frappe-bench && bench worker --queue long"
+    volumes:
+      - bench-sites:/home/frappe/frappe-bench/sites
+      - bench-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+      redis-queue:
+        condition: service_started
+    restart: unless-stopped
+
+  scheduler:
+    image: cakra-erpnext:prod
+    command: >
+      bash -c "cd /home/frappe/frappe-bench && bench schedule"
+    volumes:
+      - bench-sites:/home/frappe/frappe-bench/sites
+      - bench-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      configurator:
+        condition: service_completed_successfully
+      redis-queue:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  mariadb-data:
+  bench-sites:
+  bench-logs:

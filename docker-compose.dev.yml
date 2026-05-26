@@ -1,0 +1,64 @@
+services:
+  mariadb:
+    image: mariadb:10.8
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-character-set-client-handshake
+      - --skip-innodb-read-only-compressed
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+
+  redis-cache:
+    image: redis:alpine
+
+  redis-queue:
+    image: redis:alpine
+
+  redis-socketio:
+    image: redis:alpine
+
+  frappe:
+    build:
+      context: .
+      args:
+        FRAPPE_REPO: ${FRAPPE_REPO:-https://github.com/cakra-erpnext-apps/frappe}
+        FRAPPE_BRANCH: ${FRAPPE_BRANCH:-version-16}
+    image: cakra-erpnext:dev
+    command: >
+      bash -c "init-site.sh build-assets.sh && bench start"
+    environment:
+      SITE_NAME: ${SITE_NAME:-erp.localhost}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-123}
+      DB_HOST: mariadb
+      DB_PORT: 3306
+      REDIS_CACHE: redis://redis-cache:6379
+      REDIS_QUEUE: redis://redis-queue:6379
+      REDIS_SOCKETIO: redis://redis-socketio:6379
+      SOCKETIO_PORT: 9000
+
+      INSTALL_APPS: ${INSTALL_APPS:-erpnext,hrms,erpnext_custom,crm,helpdesk,raven,gameplan,telephony}
+      BUILD_APPS: ${BUILD_APPS:-frappe,erpnext,hrms,crm,helpdesk,raven,gameplan,telephony}
+      SKIP_BUILD_APPS: ${SKIP_BUILD_APPS:-erpnext_custom}
+      ASSET_STRICT: ${ASSET_STRICT:-0}
+    volumes:
+      - bench-sites:/home/frappe/frappe-bench/sites
+      - bench-logs:/home/frappe/frappe-bench/logs
+    ports:
+      - "8000:8000"
+      - "9000:9000"
+    depends_on:
+      - mariadb
+      - redis-cache
+      - redis-queue
+      - redis-socketio
+
+volumes:
+  mariadb-data:
+  bench-sites:
+  bench-logs:
