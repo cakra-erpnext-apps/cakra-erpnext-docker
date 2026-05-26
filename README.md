@@ -1,115 +1,78 @@
-# Cakra ERPNext Docker Setup
+# Cakra ERPNext Docker
 
-Setup ini digunakan untuk menjalankan ERPNext/Frappe dari fork repository milik `cakra-erpnext-apps` menggunakan Docker.
+Docker setup untuk menjalankan Frappe/ERPNext v16 dari fork repository `cakra-erpnext-apps`.
 
-Target utama setup ini:
+Setup ini dibuat untuk dua kebutuhan:
 
-- Local development ERPNext/Frappe
-- Mudah update app dari fork GitHub
-- Bisa dijadikan dasar untuk staging/production
-- Mendukung custom app seperti `erpnext_custom`
+- **Local development** menggunakan `bench start`
+- **Production-like / staging** dengan service terpisah: backend, websocket, workers, scheduler, MariaDB, dan Redis
+
+> Catatan: setup production di repo ini masih membutuhkan reverse proxy seperti Nginx, Caddy, atau Traefik jika ingin dipakai untuk domain publik + SSL.
 
 ---
 
-## Struktur Folder
+## Repository Structure
 
-Contoh struktur project:
+Repo ini sebaiknya hanya berisi file Docker/deployment, bukan source app Frappe.
 
 ```text
-oak_app/
-├── apps.json
+cakra-erpnext-docker/
 ├── Dockerfile
-├── docker-compose.yml
-├── .env
-├── scripts/
-│   └── init-site.sh
-├── frappe/
-├── erpnext/
-├── erpnext_custom/
-├── hrms/
-├── crm/
-├── helpdesk/
-├── raven/
-├── gameplan/
-└── telephony/
+├── apps.json
+├── docker-compose.dev.yml
+├── docker-compose.prod.yml
+├── .env.example
+├── README.md
+└── scripts/
+    ├── init-site.sh
+    └── build-assets.sh
 ```
 
-Catatan:
+Folder app seperti ini **tidak perlu dimasukkan ke repo Docker**:
 
-- `frappe` digunakan sebagai framework utama saat `bench init`.
-- App lain seperti `erpnext`, `hrms`, dan `erpnext_custom` di-install ke site menggunakan `bench install-app`.
-- Untuk awal development, install app core dulu: `erpnext`, `hrms`, dan `erpnext_custom`.
+```text
+frappe/
+erpnext/
+hrms/
+crm/
+helpdesk/
+raven/
+gameplan/
+telephony/
+erpnext_custom/
+```
+
+Semua app diambil dari GitHub melalui `apps.json`.
 
 ---
 
-## Repository yang Digunakan
+## Apps yang Digunakan
 
-Semua app diasumsikan sudah di-fork ke organization:
+Semua app diasumsikan berada di organization:
 
 ```text
 https://github.com/cakra-erpnext-apps
 ```
 
-Repository utama:
+Branch yang disarankan:
 
 ```text
-frappe
-erpnext
-hrms
-crm
-helpdesk
-raven
-gameplan
-telephony
-erpnext_custom
-```
-
-Untuk Frappe/ERPNext v16, pastikan branch utama memakai:
-
-```text
-frappe  -> version-16
-erpnext -> version-16
-hrms    -> version-16
-```
-
-App lain bisa memakai branch sesuai kebutuhan, misalnya `main` atau `develop`, tapi tetap perlu dicek kompatibilitasnya dengan Frappe v16.
-
----
-
-## File `.env`
-
-Buat file `.env` di root project:
-
-```env
-COMPOSE_PROJECT_NAME=cakra_erpnext
-
-SITE_NAME=erp.localhost
-ADMIN_PASSWORD=admin
-MYSQL_ROOT_PASSWORD=123
-
-FRAPPE_REPO=https://github.com/cakra-erpnext-apps/frappe
-FRAPPE_BRANCH=version-16
-
-INSTALL_APPS=erpnext,hrms,erpnext_custom
-```
-
-Untuk awal, jangan langsung install semua app. Gunakan dulu:
-
-```env
-INSTALL_APPS=erpnext,hrms,erpnext_custom
-```
-
-Setelah core berhasil jalan, baru bisa coba app tambahan:
-
-```env
-INSTALL_APPS=erpnext,hrms,erpnext_custom,crm,helpdesk,raven,gameplan,telephony
+frappe          version-16
+erpnext         version-16
+hrms            version-16
+erpnext_custom  main
+crm             main
+helpdesk        main
+raven           main
+gameplan        main
+telephony       develop
 ```
 
 ---
 
-## File `apps.json`
+## apps.json
 
-File ini berisi daftar app yang akan diambil saat build image.
+`apps.json` digunakan saat Docker build untuk mengambil source app menggunakan `bench get-app --skip-assets`.
 
 ```json
 [
@@ -158,30 +121,75 @@ File ini berisi daftar app yang akan diambil saat build image.
 
 ---
 
-## Cara Menjalankan Local Development
+## .env
 
-Pastikan posisi terminal berada di root project:
+Buat file `.env` dari `.env.example`.
 
-```bash
-cd oak_app
+```env
+COMPOSE_PROJECT_NAME=cakra_erpnext
+
+SITE_NAME=erp.localhost
+ADMIN_PASSWORD=admin
+MYSQL_ROOT_PASSWORD=123
+
+FRAPPE_REPO=https://github.com/cakra-erpnext-apps/frappe
+FRAPPE_BRANCH=version-16
+
+INSTALL_APPS=erpnext,hrms,erpnext_custom,crm,helpdesk,raven,gameplan,telephony
+
+BUILD_APPS=frappe,erpnext,hrms,crm,helpdesk,raven,gameplan,telephony
+SKIP_BUILD_APPS=erpnext_custom
+ASSET_STRICT=0
 ```
 
-Jalankan Docker Compose:
-
-```bash
-docker compose up --build
-```
-
-Atau kalau ingin menjalankan di background:
-
-```bash
-docker compose up -d --build
-```
-
-Buka browser:
+### Perbedaan `INSTALL_APPS` dan `BUILD_APPS`
 
 ```text
-http://localhost:8000
+INSTALL_APPS = app yang dipasang ke site Frappe
+BUILD_APPS   = app yang CSS/JS assets-nya dibuild
+```
+
+`erpnext_custom` tetap bisa di-install, tetapi tidak perlu asset build jika app tersebut tidak punya frontend asset sendiri.
+
+Jika ada app yang error saat asset build, tambahkan ke `SKIP_BUILD_APPS`.
+
+```env
+SKIP_BUILD_APPS=erpnext_custom,telephony
+```
+
+---
+
+## Dockerfile Concept
+
+Dockerfile hanya melakukan:
+
+1. Install package tambahan seperti `netcat-openbsd`
+2. `bench init` menggunakan fork `frappe`
+3. `bench get-app --skip-assets` untuk semua app di `apps.json`
+4. Copy script `init-site.sh` dan `build-assets.sh`
+
+Dockerfile **tidak menjalankan `bench build` langsung**. Asset build dijalankan saat container start melalui `build-assets.sh`, supaya lebih fleksibel untuk development dan tidak membuat image build gagal karena satu app bermasalah.
+
+---
+
+## Local Development
+
+Jalankan:
+
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
+
+Atau background:
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+Buka:
+
+```text
+http://127.0.0.1:8000
 ```
 
 Login default:
@@ -191,13 +199,13 @@ Username: Administrator
 Password: admin
 ```
 
-Password mengikuti value `ADMIN_PASSWORD` di file `.env`.
+Password mengikuti `ADMIN_PASSWORD` di `.env`.
 
 ---
 
-## Service yang Digunakan
+## Development Services
 
-Di `docker-compose.yml`, service utama yang digunakan:
+`docker-compose.dev.yml` menjalankan service:
 
 ```text
 mariadb
@@ -207,87 +215,155 @@ redis-socketio
 frappe
 ```
 
-Fungsi masing-masing:
-
-| Service | Fungsi |
-|---|---|
-| `mariadb` | Database ERPNext/Frappe |
-| `redis-cache` | Cache Frappe |
-| `redis-queue` | Queue/background jobs |
-| `redis-socketio` | Realtime/socket.io |
-| `frappe` | Container utama untuk menjalankan bench |
-
-Untuk local development, container `frappe` menjalankan:
+Service `frappe` menjalankan:
 
 ```bash
-bench start
+init-site.sh build-assets.sh && bench start
+```
+
+Artinya:
+
+1. Menunggu database siap
+2. Membuat site jika belum ada
+3. Install apps dari `INSTALL_APPS`
+4. Migrate
+5. Build assets dari `BUILD_APPS`
+6. Menjalankan `bench start`
+
+---
+
+## Production-like / Staging
+
+Jalankan:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Service production-like:
+
+```text
+mariadb
+redis-cache
+redis-queue
+redis-socketio
+configurator
+backend
+websocket
+queue-short
+queue-default
+queue-long
+scheduler
+```
+
+`configurator` menjalankan:
+
+```bash
+init-site.sh build-assets.sh && echo configured
+```
+
+Service lain menunggu `configurator` selesai dengan sukses menggunakan:
+
+```yaml
+condition: service_completed_successfully
+```
+
+Jika belum memakai reverse proxy, backend diexpose ke:
+
+```text
+http://SERVER_IP:8000
+```
+
+Websocket diexpose ke:
+
+```text
+SERVER_IP:9000
+```
+
+Untuk production publik, tambahkan reverse proxy dan SSL.
+
+---
+
+## Reverse Proxy Recommendation
+
+Untuk production publik, gunakan Nginx/Caddy/Traefik.
+
+Route minimal:
+
+```text
+https://domain.com        -> backend:8000
+/socket.io               -> websocket:9000
+/assets                  -> backend/static files
+/files                   -> backend/site files
+```
+
+Setup reverse proxy belum disertakan di repo ini.
+
+---
+
+## Useful Commands
+
+Build image:
+
+```bash
+docker compose -f docker-compose.dev.yml build --no-cache frappe
+```
+
+Run development:
+
+```bash
+docker compose -f docker-compose.dev.yml up
+```
+
+Run production-like:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+View logs:
+
+```bash
+docker compose -f docker-compose.dev.yml logs -f
+docker compose -f docker-compose.dev.yml logs -f frappe
+```
+
+Enter Frappe container jika service running:
+
+```bash
+docker compose -f docker-compose.dev.yml exec frappe bash
+```
+
+Jika service tidak running:
+
+```bash
+docker compose -f docker-compose.dev.yml run --rm frappe bash
+```
+
+Atau:
+
+```bash
+docker compose -f docker-compose.dev.yml run --rm --entrypoint bash frappe
 ```
 
 ---
 
-## Perintah Docker yang Sering Dipakai
+## Bench Commands
 
-Build dan jalankan container:
-
-```bash
-docker compose up --build
-```
-
-Jalankan di background:
+Masuk container:
 
 ```bash
-docker compose up -d --build
-```
-
-Lihat log:
-
-```bash
-docker compose logs -f
-```
-
-Lihat log service Frappe saja:
-
-```bash
-docker compose logs -f frappe
-```
-
-Masuk ke container Frappe:
-
-```bash
-docker compose exec frappe bash
-```
-
-Stop container:
-
-```bash
-docker compose down
-```
-
-Stop dan hapus volume database/site:
-
-```bash
-docker compose down -v
-```
-
-Hati-hati: command `down -v` akan menghapus data MariaDB dan site.
-
----
-
-## Bench Command di Dalam Container
-
-Masuk dulu ke container:
-
-```bash
-docker compose exec frappe bash
-```
-
-Lalu jalankan command dari folder bench:
-
-```bash
+docker compose -f docker-compose.dev.yml exec frappe bash
 cd /home/frappe/frappe-bench
 ```
 
-Migrate site:
+List installed apps:
+
+```bash
+bench --site erp.localhost list-apps
+```
+
+Migrate:
 
 ```bash
 bench --site erp.localhost migrate
@@ -297,11 +373,6 @@ Clear cache:
 
 ```bash
 bench --site erp.localhost clear-cache
-```
-
-Clear website cache:
-
-```bash
 bench --site erp.localhost clear-website-cache
 ```
 
@@ -311,239 +382,243 @@ Install app manual:
 bench --site erp.localhost install-app nama_app
 ```
 
-Contoh:
+Build asset manual:
 
 ```bash
-bench --site erp.localhost install-app crm
+build-assets.sh
 ```
 
-Lihat app yang sudah terinstall:
+Strict mode:
 
 ```bash
-bench --site erp.localhost list-apps
+ASSET_STRICT=1 build-assets.sh
 ```
 
 ---
 
-## Cara Update Development
+## Update App Source
 
-Jika ada perubahan di repository fork, rebuild image:
+Jika ada update di fork GitHub:
 
 ```bash
-docker compose build --no-cache frappe
+docker compose -f docker-compose.dev.yml down
+docker compose -f docker-compose.dev.yml build --no-cache frappe
+docker compose -f docker-compose.dev.yml up
 ```
 
-Lalu jalankan ulang:
+Jika hanya ingin rebuild tanpa menghapus data:
 
 ```bash
-docker compose up -d
+docker compose -f docker-compose.dev.yml build --no-cache frappe
+docker compose -f docker-compose.dev.yml up -d
 ```
 
-Setelah itu migrate:
+Lalu migrate:
 
 ```bash
-docker compose exec frappe bash
+docker compose -f docker-compose.dev.yml exec frappe bash
 cd /home/frappe/frappe-bench
 bench --site erp.localhost migrate
 ```
 
 ---
 
-## Cara Menambah App Baru
+## Reset Local Development
 
-1. Tambahkan app ke `apps.json`:
-
-```json
-{
-  "name": "nama_app",
-  "url": "https://github.com/cakra-erpnext-apps/nama_app",
-  "branch": "main"
-}
-```
-
-2. Rebuild image:
+Hapus container dan volume:
 
 ```bash
-docker compose build --no-cache frappe
+docker compose -f docker-compose.dev.yml down -v --remove-orphans
 ```
 
-3. Tambahkan nama app ke `.env`:
-
-```env
-INSTALL_APPS=erpnext,hrms,erpnext_custom,nama_app
-```
-
-4. Jalankan ulang container:
+Hapus image project:
 
 ```bash
-docker compose up -d
+docker image rm cakra-erpnext:dev || true
 ```
 
-5. Install manual jika belum otomatis:
-
-```bash
-docker compose exec frappe bash
-cd /home/frappe/frappe-bench
-bench --site erp.localhost install-app nama_app
-bench --site erp.localhost migrate
-```
-
----
-
-## Catatan Branch
-
-Karena setup ini memakai Frappe v16, pastikan branch app utama konsisten:
-
-```text
-frappe  : version-16
-erpnext : version-16
-hrms    : version-16
-```
-
-App seperti `crm`, `helpdesk`, `raven`, `gameplan`, dan `telephony` bisa saja memakai `main` atau `develop`, tetapi jika muncul error dependency, kemungkinan branch app tersebut belum cocok dengan Frappe v16.
-
-Rekomendasi urutan install:
-
-```text
-1. frappe version-16
-2. erpnext version-16
-3. hrms version-16
-4. erpnext_custom main
-5. crm main
-6. helpdesk main
-7. raven main
-8. gameplan main
-9. telephony develop
-```
-
----
-
-## Troubleshooting
-
-### Error: file `docker-compose.dev.yml` tidak ditemukan
-
-Jika file kamu bernama:
-
-```text
-docker-compose.yml
-```
-
-Jangan jalankan:
+Jalankan ulang:
 
 ```bash
 docker compose -f docker-compose.dev.yml up --build
 ```
 
-Gunakan:
-
-```bash
-docker compose up --build
-```
-
-atau:
-
-```bash
-docker compose -f docker-compose.yml up --build
-```
+> `down -v` menghapus database MariaDB dan site. Gunakan hanya untuk reset development.
 
 ---
 
-### Error site sudah ada
+## Docker Disk Cleanup on Windows + WSL2
 
-Jika site sudah pernah dibuat, script `init-site.sh` harus melewati proses `bench new-site` dan langsung menggunakan site tersebut.
-
-Cek site:
-
-```bash
-docker compose exec frappe bash
-ls /home/frappe/frappe-bench/sites
-```
-
----
-
-### Reset semua data local
-
-Gunakan hanya jika ingin mulai dari nol:
-
-```bash
-docker compose down -v
-```
-
-Lalu jalankan ulang:
-
-```bash
-docker compose up --build
-```
-
----
-
-### App belum terinstall di site
-
-Masuk ke container:
-
-```bash
-docker compose exec frappe bash
-cd /home/frappe/frappe-bench
-```
-
-Install app:
-
-```bash
-bench --site erp.localhost install-app nama_app
-bench --site erp.localhost migrate
-```
-
----
-
-## Catatan Production
-
-Setup ini cocok untuk local development dan staging awal.
-
-Untuk production, sebaiknya service dipisah menjadi:
+Jika Docker Desktop memakai WSL2 backend, data Docker disimpan di file:
 
 ```text
-backend
-frontend / reverse proxy
-websocket
-queue-short
-queue-default
-queue-long
-scheduler
-mariadb
-redis-cache
-redis-queue
-redis-socketio
+C:\Users\<USERNAME>\AppData\Local\Docker\wsl\disk\docker_data.vhdx
 ```
 
-Untuk production juga disarankan memakai reverse proxy seperti Nginx, Caddy, atau Traefik di depan service Frappe, serta menggunakan SSL domain.
-
-Pola update production yang disarankan:
-
-```text
-1. Pull perubahan dari repository
-2. Build image baru
-3. Restart container
-4. Jalankan migrate
-5. Cek log dan fitur utama
-```
-
-Contoh:
+Cek pemakaian Docker:
 
 ```bash
-git pull
-docker compose build --no-cache
-docker compose up -d
-docker compose exec frappe bash
-cd /home/frappe/frappe-bench
-bench --site erp.localhost migrate
+docker system df
+```
+
+Bersihkan Docker cache:
+
+```bash
+docker container prune -f
+docker image prune -a -f
+docker builder prune -a -f
+```
+
+Jika volume dev boleh dihapus:
+
+```bash
+docker volume prune -f
+```
+
+Jika `docker system df` sudah kecil tetapi file VHDX masih besar, lakukan compact dari PowerShell Administrator:
+
+```powershell
+wsl --shutdown
+diskpart
+```
+
+Di `DISKPART>` jalankan satu per satu:
+
+```powershell
+select vdisk file="C:\Users\<USERNAME>\AppData\Local\Docker\wsl\disk\docker_data.vhdx"
+attach vdisk readonly
+compact vdisk
+detach vdisk
+exit
 ```
 
 ---
 
-## Important Notes
+## Common Issues
 
-- Jangan campur branch `version-15`, `version-16`, `main`, dan `develop` sembarangan tanpa cek kompatibilitas.
-- Untuk awal, install app core dulu.
-- Jangan sering memakai `docker compose down -v` kecuali memang ingin menghapus semua data.
-- Jika app custom punya dependency ke app lain, pastikan app dependency sudah di-install lebih dulu.
-- Untuk production, jangan mengedit langsung container. Update harus lewat repository dan rebuild image.
+### `error getting credentials`
+
+Biasanya terjadi setelah reset Docker Desktop.
+
+Fix di WSL:
+
+```bash
+mkdir -p ~/.docker
+mv ~/.docker/config.json ~/.docker/config.json.bak 2>/dev/null || true
+
+cat > ~/.docker/config.json <<'EOF'
+{
+  "auths": {}
+}
+EOF
+```
+
+Lalu:
+
+```bash
+docker pull mariadb:10.8
+```
+
+### `service "frappe" is not running`
+
+Gunakan `run --rm` bukan `exec`:
+
+```bash
+docker compose -f docker-compose.dev.yml run --rm frappe bash
+```
+
+### `App erpnext not in apps.txt`
+
+Biasanya karena folder `sites/` tertutup Docker volume. `init-site.sh` harus regenerate `sites/apps.txt` dari folder `apps/`.
+
+### `NoneType object is not subscriptable` saat install custom app
+
+Pastikan `erpnext_custom/hooks.py` punya metadata minimal:
+
+```python
+app_name = "erpnext_custom"
+app_title = "ERPNext Custom"
+app_publisher = "Cakra ERPNext Apps"
+app_description = "Customizations for ERPNext"
+app_email = "admin@example.com"
+app_license = "MIT"
+
+required_apps = ["frappe", "erpnext", "hrms"]
+```
+
+### Asset build error
+
+Jika app tertentu gagal saat asset build, tambahkan ke:
+
+```env
+SKIP_BUILD_APPS=erpnext_custom,nama_app
+```
+
+Jika ingin build gagal membuat container stop, gunakan:
+
+```env
+ASSET_STRICT=1
+```
+
+Untuk development, gunakan:
+
+```env
+ASSET_STRICT=0
+```
+
+---
+
+## Git Repository Recommendation
+
+Sebaiknya buat repo baru khusus Docker/deployment, misalnya:
+
+```text
+cakra-erpnext-docker
+```
+
+`.gitignore` yang disarankan:
+
+```gitignore
+.env
+*.log
+resolving
+unpacking
+
+frappe/
+erpnext/
+hrms/
+crm/
+helpdesk/
+raven/
+gameplan/
+telephony/
+erpnext_custom/
+
+sites/
+logs/
+node_modules/
+__pycache__/
+```
+
+Inisialisasi repo:
+
+```bash
+git init
+git add Dockerfile docker-compose.dev.yml docker-compose.prod.yml apps.json README.md scripts .gitignore .env.example
+git commit -m "Initial Docker setup for Cakra ERPNext"
+git branch -M main
+git remote add origin https://github.com/cakra-erpnext-apps/cakra-erpnext-docker.git
+git push -u origin main
+```
+
+---
+
+## Notes
+
+- Jangan commit `.env`. Gunakan `.env.example`.
+- Jangan commit folder app hasil clone.
+- Jangan commit volume, database, logs, atau node_modules.
+- Untuk development, `ASSET_STRICT=0` lebih nyaman.
+- Untuk production/staging, gunakan `ASSET_STRICT=1`.
+- Untuk production publik, gunakan reverse proxy dan SSL.
+- Jika install semua app sekaligus, pisahkan `INSTALL_APPS`, `BUILD_APPS`, dan `SKIP_BUILD_APPS` supaya troubleshooting lebih mudah.
