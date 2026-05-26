@@ -38,5 +38,10 @@
     "name": "telephony",
     "url": "https://github.com/cakra-erpnext-apps/telephony",
     "branch": "develop"
+  },
+  {
+    "name": "container_depot",
+    "url": "https://github.com/cakra-erpnext-apps/container_depot",
+    "branch": "main"
   }
 ]
