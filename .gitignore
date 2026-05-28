@@ -12,6 +12,7 @@ raven/
 gameplan/
 telephony/
 erpnext_custom/
+container_depot/
 
 sites/
 logs/

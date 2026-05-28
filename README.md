@@ -232,6 +232,129 @@ Artinya:
 
 ---
 
+## Live Code Editing (Bind Mount)
+
+App yang aktif dikembangkan di-mount langsung dari host ke dalam container, sehingga edit di VSCode langsung terlihat tanpa rebuild image.
+
+`docker-compose.dev.yml` punya bind mount:
+
+```yaml
+volumes:
+  - ./erpnext_custom:/home/frappe/frappe-bench/apps/erpnext_custom
+  - ./container_depot:/home/frappe/frappe-bench/apps/container_depot
+```
+
+App lain (frappe, erpnext, hrms, crm, helpdesk, raven, gameplan, telephony) tetap baked di image, supaya container start cepat dan image tetap bisa dipakai untuk production.
+
+### Yang otomatis reload
+
+```text
+Python (.py)         bench start auto-reload worker
+JS / CSS / SCSS      bench watch rebuild bundle, refresh browser
+```
+
+### Yang butuh perintah manual
+
+```text
+DocType / fixture baru atau berubah   scripts/migrate.sh
+hooks.py atau scheduled job berubah   scripts/restart.sh
+```
+
+### Permission
+
+Container jalan sebagai user `frappe` (UID 1000). Pada WSL2 user host biasanya juga UID 1000, jadi bind mount langsung bisa tulis. Kalau muncul permission error di `__pycache__` atau `.egg-info`, cek `id -u` di host — kalau bukan 1000, alignment perlu di-fix.
+
+### Asset build untuk app yang di-mount
+
+`erpnext_custom` dan `container_depot` ada di `SKIP_BUILD_APPS` di `.env`. Selama belum ada JS/CSS baru, ini aman. Begitu menambah file di `<app>/public/`, hapus app tersebut dari `SKIP_BUILD_APPS` dan tambahkan ke `BUILD_APPS` supaya bundle ikut ter-build.
+
+---
+
+## Helper Scripts
+
+Wrapper tipis untuk operasi dev yang paling sering dipakai. Semua skrip aman dipanggil dari direktori manapun karena `cd` ke project root sendiri.
+
+```text
+scripts/migrate.sh           bench --site $SITE_NAME migrate
+scripts/restart.sh           docker compose restart frappe
+scripts/shell.sh             masuk container (exec kalau running, run --rm kalau tidak)
+scripts/logs.sh [service]    tail logs, default service = frappe
+scripts/test.sh [app]        bench run-tests --app, default app = erpnext_custom
+```
+
+Contoh:
+
+```bash
+scripts/migrate.sh
+scripts/test.sh container_depot
+scripts/logs.sh
+```
+
+---
+
+## Verifikasi Setup Bind Mount
+
+Langkah pertama kali setelah bind mount diaktifkan, atau setelah clone repo di mesin baru.
+
+### 1. Cek UID host
+
+```bash
+id -u
+```
+
+Harus `1000` supaya cocok dengan user `frappe` di container. Kalau bukan 1000, permission write di `__pycache__` / `.egg-info` akan gagal dan perlu di-fix dulu sebelum lanjut.
+
+### 2. Reload container
+
+Volume berubah, jadi container harus di-recreate. Database dan site tetap aman karena bukan `down -v`.
+
+```bash
+docker compose -f docker-compose.dev.yml down
+docker compose -f docker-compose.dev.yml up -d
+scripts/logs.sh
+```
+
+Tunggu sampai `bench start` jalan dan ada output dari `watch`, `socketio`, dan `worker`.
+
+### 3. Verifikasi bind mount kepakai
+
+```bash
+scripts/shell.sh
+ls -la apps/erpnext_custom/
+exit
+```
+
+Isi folder harus sama persis dengan folder host (ada `pyproject.toml`, `erpnext_custom.egg-info`, dll.).
+
+Test reload: edit satu file Python di host (misal tambah `print("hello")` di sebuah API endpoint), trigger endpoint tersebut, dan `print` harus muncul di `scripts/logs.sh` tanpa rebuild image.
+
+### 4. Smoke test
+
+Buka [http://127.0.0.1:8000](http://127.0.0.1:8000), login `Administrator` / `ADMIN_PASSWORD`. Pastikan:
+
+```text
+erpnext_custom DocTypes muncul
+container_depot module muncul di Module List
+```
+
+Kalau app tidak ke-install, jalankan manual:
+
+```bash
+scripts/shell.sh
+bench --site erp.localhost install-app container_depot
+exit
+```
+
+### 5. Commit perubahan Docker repo
+
+```bash
+git status
+git add docker-compose.dev.yml scripts/ README.md
+git commit -m "Add bind mounts and helper scripts for live app dev"
+```
+
+---
+
 ## Production-like / Staging
 
 Jalankan:
@@ -398,27 +521,36 @@ ASSET_STRICT=1 build-assets.sh
 
 ## Update App Source
 
-Jika ada update di fork GitHub:
+### App yang di-mount (erpnext_custom, container_depot)
+
+Edit di host langsung kepakai. Setelah `git pull` di folder app:
 
 ```bash
-docker compose -f docker-compose.dev.yml down
-docker compose -f docker-compose.dev.yml build --no-cache frappe
-docker compose -f docker-compose.dev.yml up
+scripts/migrate.sh    # kalau ada perubahan DocType / fixture / patch
+scripts/restart.sh    # kalau ada perubahan hooks.py / scheduled job
 ```
 
-Jika hanya ingin rebuild tanpa menghapus data:
+Tidak perlu rebuild image.
+
+### App yang baked (frappe, erpnext, hrms, dll.)
+
+Kalau mau update versi atau ganti branch di `apps.json`, rebuild image:
 
 ```bash
 docker compose -f docker-compose.dev.yml build --no-cache frappe
 docker compose -f docker-compose.dev.yml up -d
+scripts/migrate.sh
 ```
 
-Lalu migrate:
+Volume `bench-sites` tidak terhapus, jadi database dan site aman.
 
-```bash
-docker compose -f docker-compose.dev.yml exec frappe bash
-cd /home/frappe/frappe-bench
-bench --site erp.localhost migrate
+### Kapan harus rebuild image
+
+```text
+Dockerfile berubah                          rebuild
+apps.json tambah/hapus app                  rebuild
+Ganti branch frappe / erpnext / dll.        rebuild
+Edit kode di erpnext_custom / container_depot   TIDAK perlu rebuild
 ```
 
 ---

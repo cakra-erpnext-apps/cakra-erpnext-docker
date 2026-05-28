@@ -49,6 +49,8 @@ services:
     volumes:
       - bench-sites:/home/frappe/frappe-bench/sites
       - bench-logs:/home/frappe/frappe-bench/logs
+      - ./erpnext_custom:/home/frappe/frappe-bench/apps/erpnext_custom
+      - ./container_depot:/home/frappe/frappe-bench/apps/container_depot
     ports:
       - "8000:8000"
       - "9000:9000"
