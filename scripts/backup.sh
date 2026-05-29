@@ -21,12 +21,12 @@ echo "=== $(date -Iseconds) backup start (site=$SITE_NAME) ==="
 
 # 1. Trigger bench backup inside container — writes to the bench-sites volume.
 $COMPOSE exec -T backend \
-  bash -c 'bench --site "$SITE_NAME" backup --with-files --compress'
+  bash -c "bench --site '$SITE_NAME' backup --with-files --compress"
 
 # 2. Copy site_config.json into the backup folder. Contains encryption_key —
 #    without it, encrypted Password fields can't be decoded on restore.
 $COMPOSE exec -T backend \
-  bash -c 'cp -f "sites/$SITE_NAME/site_config.json" "sites/$SITE_NAME/private/backups/site_config.json"'
+  bash -c "cp -f sites/'$SITE_NAME'/site_config.json sites/'$SITE_NAME'/private/backups/site_config.json"
 
 # 3. Stream the backup folder out of the volume to the host's ./backups/.
 CONTAINER_ID="$($COMPOSE ps -q backend)"

@@ -109,7 +109,7 @@ services:
       - bench-sites:/home/frappe/frappe-bench/sites
       - bench-logs:/home/frappe/frappe-bench/logs
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8000/api/method/ping >/dev/null 2>&1 || exit 1"]
+      test: ['CMD-SHELL', 'wget -q -O - --header="Host: app.oakdepo.com" http://127.0.0.1:8000/api/method/ping >/dev/null 2>&1 || exit 1']
       interval: 30s
       timeout: 10s
       retries: 5
@@ -204,8 +204,7 @@ services:
   nginx:
     image: nginx:alpine
     ports:
-      - "80:80"
-      - "443:443"
+      - "127.0.0.1:8088:80"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ./nginx/certs:/etc/nginx/certs:ro
@@ -215,7 +214,7 @@ services:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/api/method/ping"]
+      test: ['CMD-SHELL', 'wget -q -O - --header="Host: app.oakdepo.com" http://127.0.0.1/api/method/ping >/dev/null 2>&1 || exit 1']
       interval: 30s
       timeout: 10s
       retries: 5
