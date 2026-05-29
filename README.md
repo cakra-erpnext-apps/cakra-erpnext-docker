@@ -373,17 +373,18 @@ queue-short     worker untuk job pendek
 queue-default   worker untuk job default
 queue-long      worker untuk job panjang
 scheduler       cron scheduler
-nginx           reverse proxy (port 80 + 443 ke host)
+nginx           internal reverse proxy (bind 127.0.0.1:8088, fronted by host proxy)
 ```
 
-Hanya `nginx` yang expose port ke host. `backend` dan `websocket` di-akses lewat nginx saja (internal docker network).
+Docker nginx bind ke `127.0.0.1:8088` — **tidak** exposed ke publik. TLS dan akses publik dihandle host-level reverse proxy (nginx/Caddy di luar docker) — lihat step #4. `backend`, `websocket`, mariadb, redis semua internal docker network only.
 
 ### Prerequisites di server
 
 ```text
 - Docker + docker compose plugin terinstall
+- Host nginx atau Caddy terinstall (untuk outer reverse proxy + TLS)
 - Domain DNS A-record sudah mengarah ke IP server
-- Port 80 dan 443 terbuka di firewall
+- Port 80 dan 443 terbuka di firewall (untuk outer proxy)
 - User yang menjalankan docker bukan root (tambahkan ke group docker)
 ```
 
@@ -400,7 +401,7 @@ cp .env.example .env
 Edit `.env` — wajib ganti:
 
 ```env
-SITE_NAME=erp.yourdomain.com               # bukan localhost
+SITE_NAME=app.oakdepo.com                   # harus match Host header di healthcheck
 ADMIN_PASSWORD=<random 24+ chars>           # generate: openssl rand -base64 24
 MYSQL_ROOT_PASSWORD=<random 24+ chars>      # generate: openssl rand -base64 24
 INSTALL_APPS=erpnext,hrms,erpnext_custom,container_depot,crm,helpdesk,raven,gameplan,telephony
@@ -431,58 +432,118 @@ Tunggu sampai muncul `configured` di log. Configurator akan:
 
 Setelah itu service lain (backend, websocket, workers) auto-start karena `depends_on: service_completed_successfully`.
 
-#### 3. Verifikasi via HTTP
+#### 3. Verifikasi internal (HTTP via loopback)
+
+Docker nginx di-bind ke `127.0.0.1:8088` — **tidak** exposed ke publik. Tes dari server itu sendiri (SSH dulu), bukan dari laptop:
 
 ```bash
-curl -I http://erp.yourdomain.com/api/method/ping
+curl -I --resolve app.oakdepo.com:8088:127.0.0.1 http://app.oakdepo.com:8088/api/method/ping
 # expect: HTTP/1.1 200 OK
 ```
 
-Buka di browser:
+Note: `--resolve` perlu karena `SITE_NAME` di healthcheck dan Frappe site routing pakai `app.oakdepo.com`, sementara kita akses via `127.0.0.1`. `--resolve` paksa Host header `app.oakdepo.com` ke IP loopback.
+
+Kalau OK, lanjut ke setup outer proxy. Belum bisa buka di browser sampai outer proxy + DNS + TLS jadi.
+
+#### 4. Outer reverse proxy + TLS (host nginx atau Caddy)
+
+**Arsitektur:**
 
 ```text
-http://erp.yourdomain.com
-Login: Administrator / <ADMIN_PASSWORD dari .env>
+internet ─HTTPS─▶  host reverse proxy (TLS, port 443)
+                   ─HTTP─▶  127.0.0.1:8088 (docker nginx)
+                            ─HTTP─▶  backend:8000 (gunicorn)
 ```
 
-#### 4. Aktifkan HTTPS (Let's Encrypt)
+TLS termination di host, **bukan** di docker. Docker nginx pure internal router. Pilihan outer proxy: host nginx (paling umum, butuh Certbot manual), atau Caddy (auto-TLS dari Let's Encrypt, paling sedikit config).
 
-Repo ini sudah include path untuk Let's Encrypt webroot challenge di nginx config. Generate cert pakai certbot (install di host, bukan di container):
+##### Opsi A: Caddy di host (recommended kalau server ini cuma untuk Oak)
+
+Install:
 
 ```bash
-sudo apt install certbot
-sudo certbot certonly --webroot \
-  -w /opt/oak_app/nginx/certbot-www \
-  -d erp.yourdomain.com \
-  --email you@yourdomain.com \
-  --agree-tos --no-eff-email
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update && sudo apt install caddy
 ```
 
-Catatan: certbot-www adalah volume yang di-share antara certbot dan nginx. Cara paling rapi adalah pakai certbot di docker juga. Versi singkat (pakai certbot standalone di host):
+`/etc/caddy/Caddyfile`:
+
+```caddy
+app.oakdepo.com {
+    reverse_proxy 127.0.0.1:8088 {
+        header_up X-Forwarded-Proto https
+        header_up Host {host}
+    }
+
+    encode gzip
+    log {
+        output file /var/log/caddy/oak.log
+    }
+}
+```
+
+Apply:
 
 ```bash
-# stop nginx sebentar, generate cert via standalone mode
-docker compose -f docker-compose.prod.yml stop nginx
-sudo certbot certonly --standalone -d erp.yourdomain.com --email you@yourdomain.com --agree-tos --no-eff-email
-
-# copy cert ke nginx/certs/
-sudo cp /etc/letsencrypt/live/erp.yourdomain.com/fullchain.pem nginx/certs/
-sudo cp /etc/letsencrypt/live/erp.yourdomain.com/privkey.pem nginx/certs/
-sudo chown $USER:$USER nginx/certs/*.pem
-
-# enable HTTPS server block + redirect di nginx/conf.d/default.conf
-# (uncomment dua blok yang ditandai "HTTPS" dan "Uncomment after HTTPS server block")
-vim nginx/conf.d/default.conf
-
-# restart nginx
-docker compose -f docker-compose.prod.yml start nginx
+sudo systemctl reload caddy
 ```
 
-Setup auto-renewal cron di host:
+Caddy auto-fetch cert dari Let's Encrypt saat request pertama, auto-renew tanpa cron tambahan. Verifikasi:
 
 ```bash
-0 3 * * * certbot renew --quiet --post-hook "cp /etc/letsencrypt/live/erp.yourdomain.com/*.pem /opt/oak_app/nginx/certs/ && docker compose -f /opt/oak_app/docker-compose.prod.yml restart nginx"
+curl -I https://app.oakdepo.com/api/method/ping
+# expect: HTTP/1.1 200 OK + valid TLS cert
 ```
+
+##### Opsi B: host nginx + Certbot (kalau sudah ada nginx di server)
+
+```bash
+sudo apt install -y nginx certbot python3-certbot-nginx
+```
+
+`/etc/nginx/sites-available/app.oakdepo.com`:
+
+```nginx
+server {
+    listen 80;
+    server_name app.oakdepo.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8088;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 120s;
+        client_max_body_size 50m;
+    }
+}
+```
+
+Enable + obtain cert:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/app.oakdepo.com /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d app.oakdepo.com --email you@yourdomain.com --agree-tos --no-eff-email --redirect
+```
+
+Certbot otomatis edit config nginx, install cert, set up auto-renewal via systemd timer (`systemctl list-timers | grep certbot`). Verifikasi:
+
+```bash
+curl -I https://app.oakdepo.com/api/method/ping
+```
+
+##### Catatan penting
+
+- **SITE_NAME di `.env` harus sama persis dengan domain** (`app.oakdepo.com`). Healthcheck di [docker-compose.prod.yml](docker-compose.prod.yml) hardcode domain ini di header `Host:`. Mismatch = healthcheck fail terus = backend dianggap unhealthy = nginx dependency tidak start.
+- Outer proxy **wajib** kirim `X-Forwarded-Proto: https` ke docker nginx. Tanpa ini, Frappe generate URL HTTP di email/redirect/reset link.
+- Outer proxy juga handle HTTP→HTTPS redirect. Docker nginx tidak punya redirect logic — semuanya di outer.
 
 #### 5. Backup otomatis
 
@@ -568,7 +629,7 @@ Pattern serupa bisa diterapkan ke `queue-*`, `websocket`, `scheduler`. Mariadb b
 nginx 502 Bad Gateway          backend belum healthy → docker compose ps + logs backend
 nginx 504 Gateway Timeout      gunicorn timeout → request berat, tune --timeout di compose
 "App not in apps.txt"          init-site.sh harus regenerate, restart configurator
-"Permission denied" pada cert  chown nginx/certs/*.pem ke user yang owner mountnya
+TLS error / cert expired       cek outer proxy (Caddy/host nginx), bukan docker — TLS di-handle di luar
 Backup hanya nyimpan DB        cek backend running + ada disk space di host untuk docker cp
 Setup wizard muncul terus      complete sekali lewat browser, atau bench setup-complete
 ```

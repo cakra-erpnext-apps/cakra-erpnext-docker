@@ -207,8 +207,6 @@ services:
       - "127.0.0.1:8088:80"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
-      - certbot-www:/var/www/certbot:ro
       - bench-sites:/home/frappe/frappe-bench/sites:ro
     depends_on:
       backend:
@@ -225,4 +223,3 @@ volumes:
   mariadb-data:
   bench-sites:
   bench-logs:
-  certbot-www:
