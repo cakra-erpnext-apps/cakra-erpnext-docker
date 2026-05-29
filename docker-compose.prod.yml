@@ -80,6 +80,7 @@ services:
       BUILD_APPS: ${BUILD_APPS:-frappe,erpnext,hrms,crm,helpdesk,raven,gameplan,telephony}
       SKIP_BUILD_APPS: ${SKIP_BUILD_APPS:-erpnext_custom,container_depot}
       ASSET_STRICT: ${ASSET_STRICT:-1}
+      MATERIALIZE_ASSETS: "1"
     volumes:
       - bench-sites:/home/frappe/frappe-bench/sites
       - bench-logs:/home/frappe/frappe-bench/logs

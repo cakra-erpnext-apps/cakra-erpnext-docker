@@ -75,6 +75,34 @@ for app in "${APPS[@]}"; do
   fi
 done
 
+MATERIALIZE_ASSETS="${MATERIALIZE_ASSETS:-0}"
+
+if [ "$MATERIALIZE_ASSETS" = "1" ]; then
+  echo "Materializing sites/assets/<app> from apps/<app>/<app>/public..."
+
+  cd /home/frappe/frappe-bench/sites/assets
+
+  for app_dir in /home/frappe/frappe-bench/apps/*/; do
+    app="$(basename "$app_dir")"
+    src="${app_dir}${app}/public"
+
+    if [ ! -d "$src" ]; then
+      continue
+    fi
+
+    if [ -L "$app" ] || [ -d "$app" ]; then
+      rm -rf "$app"
+    fi
+
+    cp -r "$src" "$app"
+  done
+
+  cd /home/frappe/frappe-bench
+else
+  echo "Skipping asset materialization (MATERIALIZE_ASSETS != 1)"
+  echo "Note: required for nginx:alpine in prod, breaks watcher in dev."
+fi
+
 echo "Clearing Frappe caches..."
 
 bench clear-cache || true
