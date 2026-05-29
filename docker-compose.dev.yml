@@ -41,6 +41,7 @@ services:
       REDIS_QUEUE: redis://redis-queue:6379
       REDIS_SOCKETIO: redis://redis-socketio:6379
       SOCKETIO_PORT: 9000
+      DEVELOPER_MODE: ${DEVELOPER_MODE:-1}
 
       INSTALL_APPS: ${INSTALL_APPS:-erpnext,hrms,erpnext_custom,crm,helpdesk,raven,gameplan,telephony}
       BUILD_APPS: ${BUILD_APPS:-frappe,erpnext,hrms,crm,helpdesk,raven,gameplan,telephony}

@@ -8,6 +8,7 @@ DB_HOST="${DB_HOST:-mariadb}"
 DB_PORT="${DB_PORT:-3306}"
 MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-123}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
+DEVELOPER_MODE="${DEVELOPER_MODE:-0}"
 
 REDIS_CACHE="${REDIS_CACHE:-redis://redis-cache:6379}"
 REDIS_QUEUE="${REDIS_QUEUE:-redis://redis-queue:6379}"
@@ -86,6 +87,7 @@ configure_common_site_config() {
   bench set-config -g redis_queue "$REDIS_QUEUE"
   bench set-config -g redis_socketio "$REDIS_SOCKETIO"
   bench set-config -g socketio_port "$SOCKETIO_PORT"
+  bench set-config -gp developer_mode "$DEVELOPER_MODE"
 
   echo "Current common_site_config.json:"
   cat sites/common_site_config.json || true

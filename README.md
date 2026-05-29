@@ -140,6 +140,12 @@ INSTALL_APPS=erpnext,hrms,erpnext_custom,crm,helpdesk,raven,gameplan,telephony
 BUILD_APPS=frappe,erpnext,hrms,crm,helpdesk,raven,gameplan,telephony
 SKIP_BUILD_APPS=erpnext_custom
 ASSET_STRICT=0
+
+# Hanya dipakai di docker-compose.dev.yml.
+# Default 1 di dev (lihat docker-compose.dev.yml), default 0 di prod.
+# Aktifkan developer_mode supaya assets.json selalu dibaca fresh dari disk
+# (mencegah 404 di bundle desk/erpnext/hrms setelah migrate/test memicu rebuild).
+DEVELOPER_MODE=1
 ```
 
 ### Perbedaan `INSTALL_APPS` dan `BUILD_APPS`
@@ -275,12 +281,14 @@ Container jalan sebagai user `frappe` (UID 1000). Pada WSL2 user host biasanya j
 Wrapper tipis untuk operasi dev yang paling sering dipakai. Semua skrip aman dipanggil dari direktori manapun karena `cd` ke project root sendiri.
 
 ```text
-scripts/migrate.sh           bench --site $SITE_NAME migrate
+scripts/migrate.sh           bench migrate + clear-cache + clear-website-cache
 scripts/restart.sh           docker compose restart frappe
 scripts/shell.sh             masuk container (exec kalau running, run --rm kalau tidak)
 scripts/logs.sh [service]    tail logs, default service = frappe
-scripts/test.sh [app]        bench run-tests --app, default app = erpnext_custom
+scripts/test.sh [app]        bench run-tests + clear-cache + clear-website-cache, default app = erpnext_custom
 ```
+
+`migrate.sh` dan `test.sh` selalu menutup dengan `clear-cache` dan `clear-website-cache`. Ini belt-and-suspenders untuk shared `assets_json` cache di Redis: kalau ada yang mematikan `developer_mode` di dev, bug 404 bundle (lihat troubleshooting) tidak akan terjadi.
 
 Contoh:
 
@@ -575,7 +583,7 @@ Retensi lokal default 14 hari (atur via `BACKUP_RETENTION_DAYS` di `.env`). Untu
 #### 6. Helper script untuk operasi harian prod
 
 ```text
-scripts/prod-migrate.sh         bench --site $SITE_NAME migrate
+scripts/prod-migrate.sh         bench migrate + clear-cache + clear-website-cache
 scripts/prod-shell.sh [svc]     masuk container (default: backend)
 scripts/prod-logs.sh [svc]      tail log (default: backend)
 scripts/backup.sh               jalankan backup manual
@@ -909,6 +917,28 @@ Untuk development, gunakan:
 ```env
 ASSET_STRICT=0
 ```
+
+### 404 di bundle assets (desk/erpnext/hrms .css/.js) setelah migrate atau test
+
+Gejala: browser console penuh `GET /assets/frappe/dist/js/desk.bundle.XXXXXXXX.js 404 NOT FOUND`, halaman desk tidak load, error `Error restoring session : Transport request timed out`. Muncul setelah jalan `scripts/migrate.sh` atau `scripts/test.sh`.
+
+Penyebab: `bench start` punya asset watcher yang rebuild bundle dengan **content hash baru** setiap kali file frontend berubah. Saat `bench migrate` / `bench run-tests` memicu regenerasi (mis. doctype baru menyentuh file), hash di disk berubah. Dengan `developer_mode=0`, Frappe cache mapping `assets.json` di shared Redis (`bench_cache_keys = ("assets_json",)` di `apps/frappe/frappe/cache_manager.py`). HTML di-render pakai hash lama dari cache → file dengan hash itu sudah tidak ada di disk → 404.
+
+Fix permanen (sudah ada di repo):
+
+1. `DEVELOPER_MODE=1` di [docker-compose.dev.yml](docker-compose.dev.yml) — `get_assets_json()` skip cache, selalu baca disk.
+2. `scripts/migrate.sh` dan `scripts/test.sh` selalu jalankan `bench clear-cache && bench clear-website-cache` setelah perintah utamanya.
+
+Fix manual kalau site lama belum punya `developer_mode`:
+
+```bash
+docker compose -f docker-compose.dev.yml exec frappe \
+  bash -c 'bench set-config -gp developer_mode 1 \
+    && bench --site "$SITE_NAME" clear-cache \
+    && bench --site "$SITE_NAME" clear-website-cache'
+```
+
+Lalu hard refresh browser (Ctrl+Shift+R). **Jangan** aktifkan `developer_mode=1` di prod — itu mematikan banyak caching dan expose traceback. Untuk prod, `clear-cache` di `scripts/prod-migrate.sh` sudah cukup.
 
 ---
 
