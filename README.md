@@ -607,6 +607,42 @@ scripts/prod-migrate.sh
 
 Untuk zero-downtime sebenarnya butuh blue/green atau rolling — di luar scope repo ini.
 
+#### Update app source di prod (container_depot, erpnext_custom, dll.)
+
+Beda dengan dev — di prod **tidak ada bind mount** app. Semua app di-bake ke image lewat `bench get-app` saat build (lihat [Dockerfile](Dockerfile)). Jadi edit kode di folder lokal `container_depot/` (atau app lain) tidak otomatis kepakai di prod sampai image di-rebuild.
+
+Alurnya:
+
+```bash
+# 1. Di mesin dev — push perubahan ke GitHub repo app-nya
+cd container_depot
+git add -A && git commit -m "..." && git push origin main
+
+# 2. Di server prod — rebuild image
+cd /opt/oak_app
+git pull   # opsional, kalau ada perubahan di repo oak_app
+
+# WAJIB --no-cache di stage get-app, karena apps.json tidak berubah →
+# Docker re-use layer lama dan TIDAK pull commit terbaru dari GitHub.
+docker compose -f docker-compose.prod.yml build --no-cache backend
+
+docker compose -f docker-compose.prod.yml up -d
+
+# 3. Migrate kalau ada DocType / fixture / patch baru
+scripts/prod-migrate.sh
+```
+
+Kapan butuh apa:
+
+| Jenis perubahan app | Rebuild image | `up -d` | `prod-migrate.sh` |
+| --- | --- | --- | --- |
+| DocType / fixture / patch baru | ✓ (`--no-cache`) | ✓ | ✓ |
+| Logic Python / API / controller | ✓ (`--no-cache`) | ✓ | — |
+| Asset JS/CSS (app ada di `BUILD_APPS`) | ✓ (`--no-cache`) | ✓ | — |
+| Hanya hooks.py / scheduled job | ✓ (`--no-cache`) | ✓ | — (cukup restart, sudah included di `up -d`) |
+
+Catatan: `container_depot` dan `erpnext_custom` defaultnya ada di `SKIP_BUILD_APPS` ([docker-compose.prod.yml:78](docker-compose.prod.yml#L78)) — kalau menambah file di `public/`, pindahkan ke `BUILD_APPS` dulu lewat `.env`.
+
 ### Resource limits (recommended)
 
 Default `docker-compose.prod.yml` tidak set memory/cpu limits — satu worker OOM bisa kill seluruh container. Tune berdasarkan spec server, uncomment block di `backend` service:

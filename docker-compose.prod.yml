@@ -4,6 +4,9 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "5"
 
+x-bench-env: &bench-env
+  SITE_NAME: ${SITE_NAME:?SITE_NAME is required}
+
 services:
   mariadb:
     image: mariadb:10.8
@@ -105,6 +108,7 @@ services:
       --worker-tmp-dir=/dev/shm
       --timeout=120
       frappe.app:application"
+    environment: *bench-env
     volumes:
       - bench-sites:/home/frappe/frappe-bench/sites
       - bench-logs:/home/frappe/frappe-bench/logs
@@ -130,6 +134,7 @@ services:
     image: cakra-erpnext:prod
     command: >
       bash -c "cd /home/frappe/frappe-bench && node apps/frappe/socketio.js"
+    environment: *bench-env
     volumes:
       - bench-sites:/home/frappe/frappe-bench/sites
       - bench-logs:/home/frappe/frappe-bench/logs
@@ -145,6 +150,7 @@ services:
     image: cakra-erpnext:prod
     command: >
       bash -c "cd /home/frappe/frappe-bench && bench worker --queue short"
+    environment: *bench-env
     volumes:
       - bench-sites:/home/frappe/frappe-bench/sites
       - bench-logs:/home/frappe/frappe-bench/logs
@@ -160,6 +166,7 @@ services:
     image: cakra-erpnext:prod
     command: >
       bash -c "cd /home/frappe/frappe-bench && bench worker --queue default"
+    environment: *bench-env
     volumes:
       - bench-sites:/home/frappe/frappe-bench/sites
       - bench-logs:/home/frappe/frappe-bench/logs
@@ -175,6 +182,7 @@ services:
     image: cakra-erpnext:prod
     command: >
       bash -c "cd /home/frappe/frappe-bench && bench worker --queue long"
+    environment: *bench-env
     volumes:
       - bench-sites:/home/frappe/frappe-bench/sites
       - bench-logs:/home/frappe/frappe-bench/logs
@@ -190,6 +198,7 @@ services:
     image: cakra-erpnext:prod
     command: >
       bash -c "cd /home/frappe/frappe-bench && bench schedule"
+    environment: *bench-env
     volumes:
       - bench-sites:/home/frappe/frappe-bench/sites
       - bench-logs:/home/frappe/frappe-bench/logs
