@@ -18,3 +18,8 @@ sites/
 logs/
 node_modules/
 __pycache__/
+
+nginx/certs/*.pem
+nginx/certs/*.key
+backups/*
+!backups/.gitkeep

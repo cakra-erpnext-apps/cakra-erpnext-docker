@@ -355,72 +355,223 @@ git commit -m "Add bind mounts and helper scripts for live app dev"
 
 ---
 
-## Production-like / Staging
+## Production Deployment
 
-Jalankan:
+Setup production di repo ini sudah include: stack lengkap (mariadb, redis x3, configurator, backend, websocket, 3 queue worker, scheduler), nginx reverse proxy, healthcheck di setiap service, log rotation, dan backup script. Yang belum: TLS cert (kamu generate sendiri pakai Let's Encrypt) dan off-site backup upload (uncomment di `scripts/backup.sh`).
 
-```bash
-docker compose -f docker-compose.prod.yml up -d --build
-```
-
-Service production-like:
+### Service yang berjalan
 
 ```text
-mariadb
-redis-cache
-redis-queue
-redis-socketio
-configurator
-backend
-websocket
-queue-short
-queue-default
-queue-long
-scheduler
+mariadb         database
+redis-cache     cache
+redis-queue     job queue
+redis-socketio  realtime pub/sub
+configurator    bootstrap site (run sekali, exit)
+backend         gunicorn web server (port 8000, internal)
+websocket       realtime server (port 9000, internal)
+queue-short     worker untuk job pendek
+queue-default   worker untuk job default
+queue-long      worker untuk job panjang
+scheduler       cron scheduler
+nginx           reverse proxy (port 80 + 443 ke host)
 ```
 
-`configurator` menjalankan:
+Hanya `nginx` yang expose port ke host. `backend` dan `websocket` di-akses lewat nginx saja (internal docker network).
+
+### Prerequisites di server
+
+```text
+- Docker + docker compose plugin terinstall
+- Domain DNS A-record sudah mengarah ke IP server
+- Port 80 dan 443 terbuka di firewall
+- User yang menjalankan docker bukan root (tambahkan ke group docker)
+```
+
+### Step-by-step deployment
+
+#### 1. Clone repo dan siapkan `.env`
 
 ```bash
-init-site.sh build-assets.sh && echo configured
+git clone https://github.com/<your-org>/<your-repo> /opt/oak_app
+cd /opt/oak_app
+cp .env.example .env
 ```
 
-Service lain menunggu `configurator` selesai dengan sukses menggunakan:
+Edit `.env` — wajib ganti:
+
+```env
+SITE_NAME=erp.yourdomain.com               # bukan localhost
+ADMIN_PASSWORD=<random 24+ chars>           # generate: openssl rand -base64 24
+MYSQL_ROOT_PASSWORD=<random 24+ chars>      # generate: openssl rand -base64 24
+INSTALL_APPS=erpnext,hrms,erpnext_custom,container_depot,crm,helpdesk,raven,gameplan,telephony
+```
+
+`docker-compose.prod.yml` akan menolak jalan kalau `SITE_NAME`, `ADMIN_PASSWORD`, atau `MYSQL_ROOT_PASSWORD` kosong (di-enforce via `:?`).
+
+#### 2. Build dan start stack (HTTP only dulu)
+
+```bash
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Pantau bootstrap:
+
+```bash
+docker compose -f docker-compose.prod.yml logs -f configurator
+```
+
+Tunggu sampai muncul `configured` di log. Configurator akan:
+
+1. Tunggu database healthy
+2. Buat site dengan nama `$SITE_NAME`
+3. Install semua app di `INSTALL_APPS`
+4. Migrate
+5. Build assets
+
+Setelah itu service lain (backend, websocket, workers) auto-start karena `depends_on: service_completed_successfully`.
+
+#### 3. Verifikasi via HTTP
+
+```bash
+curl -I http://erp.yourdomain.com/api/method/ping
+# expect: HTTP/1.1 200 OK
+```
+
+Buka di browser:
+
+```text
+http://erp.yourdomain.com
+Login: Administrator / <ADMIN_PASSWORD dari .env>
+```
+
+#### 4. Aktifkan HTTPS (Let's Encrypt)
+
+Repo ini sudah include path untuk Let's Encrypt webroot challenge di nginx config. Generate cert pakai certbot (install di host, bukan di container):
+
+```bash
+sudo apt install certbot
+sudo certbot certonly --webroot \
+  -w /opt/oak_app/nginx/certbot-www \
+  -d erp.yourdomain.com \
+  --email you@yourdomain.com \
+  --agree-tos --no-eff-email
+```
+
+Catatan: certbot-www adalah volume yang di-share antara certbot dan nginx. Cara paling rapi adalah pakai certbot di docker juga. Versi singkat (pakai certbot standalone di host):
+
+```bash
+# stop nginx sebentar, generate cert via standalone mode
+docker compose -f docker-compose.prod.yml stop nginx
+sudo certbot certonly --standalone -d erp.yourdomain.com --email you@yourdomain.com --agree-tos --no-eff-email
+
+# copy cert ke nginx/certs/
+sudo cp /etc/letsencrypt/live/erp.yourdomain.com/fullchain.pem nginx/certs/
+sudo cp /etc/letsencrypt/live/erp.yourdomain.com/privkey.pem nginx/certs/
+sudo chown $USER:$USER nginx/certs/*.pem
+
+# enable HTTPS server block + redirect di nginx/conf.d/default.conf
+# (uncomment dua blok yang ditandai "HTTPS" dan "Uncomment after HTTPS server block")
+vim nginx/conf.d/default.conf
+
+# restart nginx
+docker compose -f docker-compose.prod.yml start nginx
+```
+
+Setup auto-renewal cron di host:
+
+```bash
+0 3 * * * certbot renew --quiet --post-hook "cp /etc/letsencrypt/live/erp.yourdomain.com/*.pem /opt/oak_app/nginx/certs/ && docker compose -f /opt/oak_app/docker-compose.prod.yml restart nginx"
+```
+
+#### 5. Backup otomatis
+
+Tambah cron di host (sebagai user yang punya akses docker):
+
+```bash
+crontab -e
+```
+
+Tambahkan:
+
+```cron
+0 2 * * * cd /opt/oak_app && ./scripts/backup.sh >> /var/log/oak-backup.log 2>&1
+```
+
+Script jalanin `bench backup` di dalam container (tulis ke volume `bench-sites`), lalu `docker cp` artifact-nya keluar ke `./backups/` di host. Yang di-backup:
+
+```text
+<timestamp>-<site>-database.sql.gz     dump DB
+<timestamp>-<site>-files.tar           public files (uploads)
+<timestamp>-<site>-private-files.tar   private files
+site_config.json                       <-- WAJIB, berisi encryption_key
+```
+
+**Penting**: `site_config.json` berisi `encryption_key`. Tanpa file ini, semua field Password di DocType TIDAK bisa di-decrypt saat restore. `backup.sh` sudah otomatis copy file ini ke folder backup.
+
+Retensi lokal default 14 hari (atur via `BACKUP_RETENTION_DAYS` di `.env`). Untuk off-site (S3/B2/rclone), uncomment block di akhir `scripts/backup.sh`.
+
+#### 6. Helper script untuk operasi harian prod
+
+```text
+scripts/prod-migrate.sh         bench --site $SITE_NAME migrate
+scripts/prod-shell.sh [svc]     masuk container (default: backend)
+scripts/prod-logs.sh [svc]      tail log (default: backend)
+scripts/backup.sh               jalankan backup manual
+```
+
+### Update / deploy versi baru
+
+```bash
+cd /opt/oak_app
+git pull
+
+# kalau ada perubahan di Dockerfile / apps.json / app source yang baked:
+docker compose -f docker-compose.prod.yml build
+
+# kalau hanya konfigurasi (nginx, compose, env):
+docker compose -f docker-compose.prod.yml up -d
+
+# kalau ada migration (DocType / fixture / patch):
+scripts/prod-migrate.sh
+```
+
+Untuk zero-downtime sebenarnya butuh blue/green atau rolling — di luar scope repo ini.
+
+### Resource limits (recommended)
+
+Default `docker-compose.prod.yml` tidak set memory/cpu limits — satu worker OOM bisa kill seluruh container. Tune berdasarkan spec server, uncomment block di `backend` service:
 
 ```yaml
-condition: service_completed_successfully
+deploy:
+  resources:
+    limits:
+      memory: 2G
+      cpus: "2.0"
 ```
 
-Jika belum memakai reverse proxy, backend diexpose ke:
+Pattern serupa bisa diterapkan ke `queue-*`, `websocket`, `scheduler`. Mariadb butuh `innodb_buffer_pool_size` di-tune via command args kalau dataset > 1GB.
+
+### Yang BELUM di-cover repo ini
+
+| Item | Kenapa belum | Cara handle |
+| --- | --- | --- |
+| SMTP / Email Account | Per-deployment config | Set lewat desk: Email Account → New → SMTP |
+| Off-site backup upload | Provider-specific | Uncomment block di `scripts/backup.sh` (rclone/aws) |
+| CI/CD pipeline | Tooling-specific | Build image di CI, push ke registry, server pull |
+| Multi-site | Bukan use case primary | Tambah `bench new-site` di init-site.sh |
+| Frappe Cloud-style HA | Out of scope untuk single-server setup | Tidak applicable |
+
+### Troubleshooting
 
 ```text
-http://SERVER_IP:8000
+nginx 502 Bad Gateway          backend belum healthy → docker compose ps + logs backend
+nginx 504 Gateway Timeout      gunicorn timeout → request berat, tune --timeout di compose
+"App not in apps.txt"          init-site.sh harus regenerate, restart configurator
+"Permission denied" pada cert  chown nginx/certs/*.pem ke user yang owner mountnya
+Backup hanya nyimpan DB        cek backend running + ada disk space di host untuk docker cp
+Setup wizard muncul terus      complete sekali lewat browser, atau bench setup-complete
 ```
-
-Websocket diexpose ke:
-
-```text
-SERVER_IP:9000
-```
-
-Untuk production publik, tambahkan reverse proxy dan SSL.
-
----
-
-## Reverse Proxy Recommendation
-
-Untuk production publik, gunakan Nginx/Caddy/Traefik.
-
-Route minimal:
-
-```text
-https://domain.com        -> backend:8000
-/socket.io               -> websocket:9000
-/assets                  -> backend/static files
-/files                   -> backend/site files
-```
-
-Setup reverse proxy belum disertakan di repo ini.
 
 ---
 

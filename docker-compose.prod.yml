@@ -1,3 +1,9 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   mariadb:
     image: mariadb:10.8
@@ -10,19 +16,43 @@ services:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
     volumes:
       - mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
+    logging: *default-logging
 
   redis-cache:
     image: redis:alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
+    logging: *default-logging
 
   redis-queue:
     image: redis:alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
+    logging: *default-logging
 
   redis-socketio:
     image: redis:alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
+    logging: *default-logging
 
   configurator:
     image: cakra-erpnext:prod
@@ -43,19 +73,24 @@ services:
       REDIS_QUEUE: redis://redis-queue:6379
       REDIS_SOCKETIO: redis://redis-socketio:6379
       SOCKETIO_PORT: 9000
-      INSTALL_APPS: ${INSTALL_APPS:-erpnext,hrms,erpnext_custom,crm,helpdesk,raven,gameplan,telephony}
+      INSTALL_APPS: ${INSTALL_APPS:-erpnext,hrms,erpnext_custom,container_depot,crm,helpdesk,raven,gameplan,telephony}
       BUILD_APPS: ${BUILD_APPS:-frappe,erpnext,hrms,crm,helpdesk,raven,gameplan,telephony}
-      SKIP_BUILD_APPS: ${SKIP_BUILD_APPS:-erpnext_custom}
+      SKIP_BUILD_APPS: ${SKIP_BUILD_APPS:-erpnext_custom,container_depot}
       ASSET_STRICT: ${ASSET_STRICT:-1}
     volumes:
       - bench-sites:/home/frappe/frappe-bench/sites
       - bench-logs:/home/frappe/frappe-bench/logs
     depends_on:
-      - mariadb
-      - redis-cache
-      - redis-queue
-      - redis-socketio
+      mariadb:
+        condition: service_healthy
+      redis-cache:
+        condition: service_healthy
+      redis-queue:
+        condition: service_healthy
+      redis-socketio:
+        condition: service_healthy
     restart: "no"
+    logging: *default-logging
 
   backend:
     image: cakra-erpnext:prod
@@ -73,12 +108,23 @@ services:
     volumes:
       - bench-sites:/home/frappe/frappe-bench/sites
       - bench-logs:/home/frappe/frappe-bench/logs
-    ports:
-      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8000/api/method/ping >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     depends_on:
       configurator:
         condition: service_completed_successfully
     restart: unless-stopped
+    logging: *default-logging
+    # Uncomment and tune for your server:
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 2G
+    #       cpus: "2.0"
 
   websocket:
     image: cakra-erpnext:prod
@@ -87,14 +133,13 @@ services:
     volumes:
       - bench-sites:/home/frappe/frappe-bench/sites
       - bench-logs:/home/frappe/frappe-bench/logs
-    ports:
-      - "9000:9000"
     depends_on:
       configurator:
         condition: service_completed_successfully
       redis-socketio:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
   queue-short:
     image: cakra-erpnext:prod
@@ -107,8 +152,9 @@ services:
       configurator:
         condition: service_completed_successfully
       redis-queue:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
   queue-default:
     image: cakra-erpnext:prod
@@ -121,8 +167,9 @@ services:
       configurator:
         condition: service_completed_successfully
       redis-queue:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
   queue-long:
     image: cakra-erpnext:prod
@@ -135,8 +182,9 @@ services:
       configurator:
         condition: service_completed_successfully
       redis-queue:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
 
   scheduler:
     image: cakra-erpnext:prod
@@ -149,10 +197,33 @@ services:
       configurator:
         condition: service_completed_successfully
       redis-queue:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
+    logging: *default-logging
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - certbot-www:/var/www/certbot:ro
+      - bench-sites:/home/frappe/frappe-bench/sites:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/api/method/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   mariadb-data:
   bench-sites:
   bench-logs:
+  certbot-www:
