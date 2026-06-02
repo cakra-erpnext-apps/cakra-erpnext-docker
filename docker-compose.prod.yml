@@ -6,6 +6,11 @@ x-logging: &default-logging
 
 x-bench-env: &bench-env
   SITE_NAME: ${SITE_NAME:?SITE_NAME is required}
+  # Branding logo (env-driven; kosong = pakai asset bawaan container_depot)
+  BRAND_LOGO_MAIN: ${BRAND_LOGO_MAIN:-}
+  BRAND_LOGO_PDF: ${BRAND_LOGO_PDF:-}
+  # 0 = jangan paksa Letter Head 'OAK Brand' jadi default (kelola manual)
+  BRAND_LETTERHEAD_DEFAULT: ${BRAND_LETTERHEAD_DEFAULT:-1}
 
 services:
   mariadb:
