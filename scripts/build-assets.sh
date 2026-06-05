@@ -28,11 +28,22 @@ for app_dir in apps/*; do
 
     cd "$app_dir"
 
-    if [ -f "yarn.lock" ]; then
-      yarn install --check-files || yarn install
-    else
-      yarn install --check-files || yarn install
-    fi
+    # Pasang node deps + paksa optionalDependencies tetap di-resolve, supaya
+    # native binary per-platform (@rollup/rollup-linux-x64-gnu, turbo-linux-64)
+    # ikut ter-install di dalam container Linux. Di yarn v1 flag-nya boolean:
+    # gunakan `--no-ignore-optional` untuk MENG-OVERRIDE config apa pun yang
+    # diwarisi (mis. `--install.ignore-optional true` di ~/.yarnrc). CATATAN:
+    # `--ignore-optional false` SALAH di yarn v1 — `false` diartikan sebagai
+    # nama paket (`yarn add false`) dan error.
+    #
+    # Tier 1 `--check-files` me-restore binary yang hilang SELAMA .yarn-integrity
+    # bersih; image build sudah tidak lagi me-"racuni" integrity itu (hack
+    # ignore-optional di Dockerfile dihapus), jadi tier 1 sudah otoritatif di
+    # produksi. Tier 2 `--force` melewati cache/integrity sepenuhnya sebagai
+    # palu pemulihan kalau tier 1 error. Tier 3 fallback polos.
+    yarn install --check-files --no-ignore-optional \
+      || yarn install --no-ignore-optional --force \
+      || yarn install
 
     cd /home/frappe/frappe-bench
   fi

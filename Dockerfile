@@ -24,16 +24,18 @@ RUN bench init frappe-bench \
 WORKDIR /home/frappe/frappe-bench
 
 COPY --chown=frappe:frappe scripts/install-apps.py /tmp/install-apps.py
-# yarn v1 + optionalDependencies multi-OS (turbo di raven) → `yarn install
-# --check-files` ENOENT di .yarn-metadata.json untuk binary OS lain
-# (mis. turbo-darwin-64 di build Linux). ignore-optional skip semua binary
-# platform supaya get-app lolos. Di-scope ke RUN ini saja: runtime
-# build-assets.sh sudah punya fallback `yarn install --check-files || yarn install`
-# yang meng-install turbo-linux-64 normal. .yarnrc lama (kalau ada) di-restore.
-RUN cp /home/frappe/.yarnrc /home/frappe/.yarnrc.bak 2>/dev/null || true \
-    && printf -- '--install.ignore-optional true\n' >> /home/frappe/.yarnrc \
-    && python3 /tmp/install-apps.py \
-    && { mv /home/frappe/.yarnrc.bak /home/frappe/.yarnrc 2>/dev/null || rm -f /home/frappe/.yarnrc; }
+
+# Cypress/Puppeteer/Playwright download binary E2E dari CDN pihak ketiga saat
+# postinstall yarn. Build container tidak punya egress ke CDN itu (hanya clone
+# GitHub yang jalan) dan image produksi tidak pernah menjalankan E2E, jadi skip
+# via env var resmi tiap tool — BUKAN flag global yarn. Dengan begitu
+# optionalDependencies native per-platform (turbo di raven, @rollup/rollup-
+# linux-x64-gnu di app Vite) tetap di-resolve normal di dalam container Linux.
+ENV CYPRESS_INSTALL_BINARY=0 \
+    PUPPETEER_SKIP_DOWNLOAD=1 \
+    PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+
+RUN python3 /tmp/install-apps.py
 
 COPY --chown=frappe:frappe scripts/init-site.sh /usr/local/bin/init-site.sh
 COPY --chown=frappe:frappe scripts/build-assets.sh /usr/local/bin/build-assets.sh
