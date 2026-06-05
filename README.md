@@ -607,6 +607,26 @@ scripts/prod-migrate.sh
 
 Untuk zero-downtime sebenarnya butuh blue/green atau rolling — di luar scope repo ini.
 
+#### Production update helper
+
+Untuk update production harian, gunakan satu script ini:
+
+```bash
+# migrate + build assets + materialize assets + clear cache + restart runtime + verify
+scripts/prod-update.sh
+
+# kalau perlu pull/build image juga
+scripts/prod-update.sh --pull --build
+
+# kalau app source baked berubah dan Docker cache perlu dibypass
+scripts/prod-update.sh --pull --build --no-cache
+
+# kalau mau backup dulu sebelum update
+scripts/prod-update.sh --backup
+```
+
+Script ini menjalankan flow production-safe yang sama dengan catatan manual di bawah. Tetap ingat: script restart runtime services, jadi ada short disruption.
+
 #### Production asset refresh setelah `bench build`
 
 Di production, Docker nginx hanya mount volume `bench-sites` sebagai read-only:
