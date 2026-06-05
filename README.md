@@ -598,7 +598,7 @@ git pull
 # kalau ada perubahan di Dockerfile / apps.json / app source yang baked:
 docker compose -f docker-compose.prod.yml build
 
-# kalau hanya konfigurasi (nginx, compose, env):
+# naikkan container baru / apply compose env config:
 docker compose -f docker-compose.prod.yml up -d
 
 # kalau ada migration (DocType / fixture / patch):
@@ -606,6 +606,68 @@ scripts/prod-migrate.sh
 ```
 
 Untuk zero-downtime sebenarnya butuh blue/green atau rolling — di luar scope repo ini.
+
+#### Production asset refresh setelah `bench build`
+
+Di production, Docker nginx hanya mount volume `bench-sites` sebagai read-only:
+
+```text
+bench-sites:/home/frappe/frappe-bench/sites:ro
+```
+
+Nginx **tidak** melihat app source di `/home/frappe/frappe-bench/apps`. Karena itu setelah `bench build`, asset dari `apps/<app>/<app>/public` harus dimaterialize/copy ke `sites/assets/<app>`. Kalau step ini terlewat, browser akan dapat banyak 404 untuk file seperti:
+
+```text
+/assets/frappe/dist/css/desk.bundle.<hash>.css
+/assets/frappe/dist/js/desk.bundle.<hash>.js
+/assets/erpnext/dist/css/erpnext.bundle.<hash>.css
+/assets/hrms/dist/css/hrms.bundle.<hash>.css
+/assets/raven/dist/css/raven.bundle.<hash>.css
+/assets/frappe/icons/lucide/icons.svg
+```
+
+Jalankan sequence ini setelah build/migrate asset di prod:
+
+```bash
+cd /opt/oak_app
+
+docker compose -p cakra_erpnext -f docker-compose.prod.yml exec backend bash -lc '
+cd /home/frappe/frappe-bench
+bench --site app.oakdepo.com migrate
+bench build --apps frappe,erpnext,hrms,crm,helpdesk,raven,gameplan
+MATERIALIZE_ASSETS=1 /usr/local/bin/build-assets.sh
+bench --site app.oakdepo.com clear-cache
+bench --site app.oakdepo.com clear-website-cache
+'
+
+docker compose -p cakra_erpnext -f docker-compose.prod.yml restart \
+  backend websocket queue-short queue-default queue-long scheduler
+```
+
+Kenapa restart perlu: `bench build` mengubah hash file di `sites/assets/assets.json`. Gunicorn/Frappe bisa masih memegang manifest lama di memory. Restart runtime memastikan HTML baru mengarah ke hash asset baru.
+
+Verifikasi asset dari server:
+
+```bash
+curl -I -H 'Host: app.oakdepo.com' http://127.0.0.1:8088/api/method/ping
+curl -I -H 'Host: app.oakdepo.com' http://127.0.0.1:8088/assets/frappe/icons/lucide/icons.svg
+
+# cek URL app frontend
+curl -I -H 'Host: app.oakdepo.com' http://127.0.0.1:8088/helpdesk
+curl -I -H 'Host: app.oakdepo.com' http://127.0.0.1:8088/raven
+curl -I -H 'Host: app.oakdepo.com' http://127.0.0.1:8088/g
+```
+
+Catatan route:
+
+```text
+Helpdesk  /helpdesk
+Raven     /raven
+Gameplan  /g        # bukan /gameplan
+CRM       /crm      # 403 berarti permission/setup issue, bukan asset/nginx
+```
+
+Setelah deploy asset, minta user hard refresh browser (`Ctrl+F5`) atau enable DevTools → Network → Disable cache → reload.
 
 #### Update app source di prod (container_depot, erpnext_custom, dll.)
 
