@@ -8,7 +8,7 @@ PROJECT_NAME="${COMPOSE_PROJECT_NAME:-cakra_erpnext}"
 SITE_NAME="${SITE_NAME:-app.oakdepo.com}"
 BUILD_APPS_DEFAULT="frappe,erpnext,hrms,crm,helpdesk,raven,gameplan,telephony"
 BUILD_APPS_VALUE="${BUILD_APPS:-$BUILD_APPS_DEFAULT}"
-RESTART_SERVICES="backend websocket queue-short queue-default queue-long scheduler"
+RESTART_SERVICES="backend websocket queue-short queue-default queue-long scheduler nginx"
 DO_GIT_PULL="${DO_GIT_PULL:-0}"
 DO_BUILD="${DO_BUILD:-0}"
 NO_CACHE="${NO_CACHE:-0}"
@@ -29,7 +29,7 @@ Default flow:
   - build frontend assets
   - materialize assets into sites/assets for docker nginx
   - clear caches
-  - restart Frappe runtime services
+  - restart Frappe runtime services + nginx
   - verify health, app routes, and asset serving
 
 Options:
@@ -108,7 +108,7 @@ bench --site "$SITE_NAME" clear-cache
 bench --site "$SITE_NAME" clear-website-cache
 '
 
-log "Restart runtime services"
+log "Restart runtime services and nginx"
 run docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" restart $RESTART_SERVICES
 
 log "Wait for backend health"

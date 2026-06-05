@@ -625,7 +625,7 @@ scripts/prod-update.sh --pull --build --no-cache
 scripts/prod-update.sh --backup
 ```
 
-Script ini menjalankan flow production-safe yang sama dengan catatan manual di bawah. Tetap ingat: script restart runtime services, jadi ada short disruption.
+Script ini menjalankan flow production-safe yang sama dengan catatan manual di bawah. Tetap ingat: script restart runtime services + docker nginx, jadi ada short disruption. Nginx ikut direstart karena setelah rebuild/recreate backend, IP container bisa berubah dan nginx perlu resolve ulang upstream `backend`.
 
 #### Production asset refresh setelah `bench build`
 
@@ -661,7 +661,7 @@ bench --site app.oakdepo.com clear-website-cache
 '
 
 docker compose -p cakra_erpnext -f docker-compose.prod.yml restart \
-  backend websocket queue-short queue-default queue-long scheduler
+  backend websocket queue-short queue-default queue-long scheduler nginx
 ```
 
 Kenapa restart perlu: `bench build` mengubah hash file di `sites/assets/assets.json`. Gunicorn/Frappe bisa masih memegang manifest lama di memory. Restart runtime memastikan HTML baru mengarah ke hash asset baru.
