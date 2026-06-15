@@ -15,6 +15,16 @@
     "branch": "main"
   },
   {
+    "name": "erp_cmi",
+    "url": "https://github.com/cakra-erpnext-apps/erp_cmi",
+    "branch": "main"
+  },
+  {
+    "name": "cmi_agents",
+    "url": "https://github.com/cakra-erpnext-apps/agents",
+    "branch": "main"
+  },
+  {
     "name": "crm",
     "url": "https://github.com/cakra-erpnext-apps/crm",
     "branch": "main"
