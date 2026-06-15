@@ -22,6 +22,8 @@ services:
       - --skip-innodb-read-only-compressed
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+    ports:
+      - "127.0.0.1:3307:3306"
     volumes:
       - mariadb-data:/var/lib/mysql
     healthcheck:
