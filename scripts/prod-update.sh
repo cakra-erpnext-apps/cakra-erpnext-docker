@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
-PROJECT_NAME="${COMPOSE_PROJECT_NAME:-cakra_erpnext}"
+PROJECT_NAME="${COMPOSE_PROJECT_NAME:-erp_oak}"
 SITE_NAME="${SITE_NAME:-app.oakdepo.com}"
 BUILD_APPS_DEFAULT="frappe,erpnext,hrms,crm,helpdesk,raven,gameplan,telephony"
 BUILD_APPS_VALUE="${BUILD_APPS:-$BUILD_APPS_DEFAULT}"
