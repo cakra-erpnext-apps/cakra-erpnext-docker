@@ -24,4 +24,4 @@ __pycache__/
 nginx/certs/*.pem
 nginx/certs/*.key
 backups/*
-!backups/.gitkeep
+!backups/.gitkeepapps.json.bak.*
