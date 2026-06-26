@@ -591,139 +591,106 @@ scripts/backup.sh               jalankan backup manual
 
 ### Update / deploy versi baru
 
-```bash
-cd /opt/oak_app
-git pull
+> **Path & model produksi (penting — README lama menyebut `/opt/oak_app` + baked image; itu sudah usang).**
+> Stack prod sekarang ada di **`/home/apps/erp_oak/cakra-erpnext-docker`**, project **`erp_oak`**, dan dijalankan
+> dengan **DUA file compose**:
+> `docker-compose.prod.yml` + `docker-compose.override.prod.yml`.
+> Override memasang **per-domain custom app bundle** (`erp`, `erpnext_custom`, `assistant`, `crm_cakra`, dst.)
+> sebagai **bind-mount** dari `/home/apps/bundles/<bundle>/<app>` ke `apps/<app>` untuk backend + semua worker +
+> scheduler + websocket, dan menjalankan boot wrapper `scripts/ensure-bundles.sh`.
+> Artinya untuk app bundle **tidak perlu rebuild image** — cukup `git pull` bundle + restart service.
 
-# kalau ada perubahan di Dockerfile / apps.json / app source yang baked:
-docker compose -f docker-compose.prod.yml build
+#### Cara update produksi harian (recommended)
 
-# naikkan container baru / apply compose env config:
-docker compose -f docker-compose.prod.yml up -d
-
-# kalau ada migration (DocType / fixture / patch):
-scripts/prod-migrate.sh
-```
-
-Untuk zero-downtime sebenarnya butuh blue/green atau rolling — di luar scope repo ini.
-
-#### Production update helper
-
-Untuk update production harian, gunakan satu script ini:
+Pakai satu script. Sudah ditulis ulang untuk 2-file compose + multi-site + per-site asset build:
 
 ```bash
-# migrate + build assets + materialize assets + clear cache + restart runtime + verify
-scripts/prod-update.sh
+cd /home/apps/erp_oak/cakra-erpnext-docker
 
-# kalau perlu pull/build image juga
-scripts/prod-update.sh --pull --build
+# update semua site (cakraindo + oakdepo), pull repo + bundle, backup dulu:
+scripts/prod-update.sh --pull --pull-bundles --backup
 
-# kalau app source baked berubah dan Docker cache perlu dibypass
-scripts/prod-update.sh --pull --build --no-cache
+# satu site saja:
+scripts/prod-update.sh --sites "app.cakraindo.com" --backup
 
-# kalau mau backup dulu sebelum update
-scripts/prod-update.sh --backup
+# kalau perlu rebuild image baked (frappe/erpnext/hrms/crm/helpdesk/raven/dll berubah):
+scripts/prod-update.sh --pull --build            # atau --build --no-cache
 ```
 
-Script ini menjalankan flow production-safe yang sama dengan catatan manual di bawah. Tetap ingat: script restart runtime services + docker nginx, jadi ada short disruption. Nginx ikut direstart karena setelah rebuild/recreate backend, IP container bisa berubah dan nginx perlu resolve ulang upstream `backend`.
+Yang dilakukan `prod-update.sh` per site:
 
-#### Production asset refresh setelah `bench build`
+1. `bench --site <site> migrate`
+2. **derive `BUILD_APPS` otomatis dari `bench list-apps`** site itu — cakraindo & oakdepo punya app set
+   berbeda, jadi tidak ada satu daftar global. Anti-drift saat app ditambah/dihapus.
+3. `build-assets.sh` dengan `MATERIALIZE_ASSETS=1` (build + materialize asset jadi file nyata)
+4. `clear-cache` + `clear-website-cache`
+5. setelah semua site: restart `backend websocket queue-* scheduler nginx` — **nginx terakhir**
+6. verify health + `/login` + icon per site
 
-Di production, Docker nginx hanya mount volume `bench-sites` sebagai read-only:
+> **Kenapa nginx direstart terakhir:** setelah backend recreate/restart, IP container backend berubah.
+> Nginx meng-cache IP upstream `backend` saat config load → kalau tidak direstart, semua request 502
+> (Bad Gateway) walau backend sehat. Restart nginx memaksa resolve ulang.
 
-```text
-bench-sites:/home/frappe/frappe-bench/sites:ro
-```
+#### Update HANYA kode bundle (tanpa rebuild image)
 
-Nginx **tidak** melihat app source di `/home/frappe/frappe-bench/apps`. Karena itu setelah `bench build`, asset dari `apps/<app>/<app>/public` harus dimaterialize/copy ke `sites/assets/<app>`. Kalau step ini terlewat, browser akan dapat banyak 404 untuk file seperti:
-
-```text
-/assets/frappe/dist/css/desk.bundle.<hash>.css
-/assets/frappe/dist/js/desk.bundle.<hash>.js
-/assets/erpnext/dist/css/erpnext.bundle.<hash>.css
-/assets/hrms/dist/css/hrms.bundle.<hash>.css
-/assets/raven/dist/css/raven.bundle.<hash>.css
-/assets/frappe/icons/lucide/icons.svg
-```
-
-Jalankan sequence ini setelah build/migrate asset di prod:
+Karena bundle di-bind-mount, update kode app bundle = pull bundle + jalankan update:
 
 ```bash
-cd /opt/oak_app
+# 1. pull source bundle di host (bind-mount → backend langsung lihat kode baru)
+git -C /home/apps/bundles/erp_cakra pull --ff-only
 
-docker compose -p cakra_erpnext -f docker-compose.prod.yml exec backend bash -lc '
-cd /home/frappe/frappe-bench
-bench --site app.oakdepo.com migrate
-bench build --apps frappe,erpnext,hrms,crm,helpdesk,raven,gameplan
-MATERIALIZE_ASSETS=1 /usr/local/bin/build-assets.sh
-bench --site app.oakdepo.com clear-cache
-bench --site app.oakdepo.com clear-website-cache
-'
-
-docker compose -p cakra_erpnext -f docker-compose.prod.yml restart \
-  backend websocket queue-short queue-default queue-long scheduler nginx
+# 2. migrate + build + materialize + restart (otomatis lewat helper)
+cd /home/apps/erp_oak/cakra-erpnext-docker
+scripts/prod-update.sh --backup           # atau tambah --sites "app.cakraindo.com"
 ```
 
-Kenapa restart perlu: `bench build` mengubah hash file di `sites/assets/assets.json`. Gunicorn/Frappe bisa masih memegang manifest lama di memory. Restart runtime memastikan HTML baru mengarah ke hash asset baru.
+`scripts/prod-update.sh --pull-bundles` melakukan langkah 1 untukmu (`BUNDLE_DIR` default
+`/home/apps/bundles/erp_cakra`).
+
+#### Kenapa asset harus di-materialize (akar bug 404)
+
+Docker nginx **hanya** mount volume `bench-sites` (`/home/frappe/frappe-bench/sites`) — **tidak** mount
+`apps/`. Sementara `bench build` default meninggalkan `sites/assets/<app>` sebagai **symlink** ke
+`apps/<app>/<app>/public`. Nginx tidak bisa mengikuti symlink itu (tidak punya `apps/`) → **semua** asset 404,
+termasuk file unhashed seperti `icons/lucide/icons.svg` dan gambar app bundle
+(`/assets/container_depot/images/oak-emblem.png`).
+
+Solusinya **materialize**: ganti symlink jadi salinan file nyata di dalam volume `sites/`. Dua jalur:
+
+- **Otomatis tiap boot** — `scripts/ensure-bundles.sh` (boot wrapper) sekarang menjalankan materialize
+  (idempotent; `MATERIALIZE_ASSETS=0` untuk dev). Jadi setelah container recreate/host reboot, asset
+  self-heal sendiri.
+- **Manual / dalam update** — `build-assets.sh` dengan `MATERIALIZE_ASSETS=1` (dipakai `prod-update.sh`),
+  atau `bench build --hard-link`.
 
 Verifikasi asset dari server:
 
 ```bash
-curl -I -H 'Host: app.oakdepo.com' http://127.0.0.1:8088/api/method/ping
-curl -I -H 'Host: app.oakdepo.com' http://127.0.0.1:8088/assets/frappe/icons/lucide/icons.svg
+curl -I -H 'Host: app.cakraindo.com' http://127.0.0.1:8088/api/method/ping
+curl -I -H 'Host: app.cakraindo.com' http://127.0.0.1:8088/login
+curl -I -H 'Host: app.cakraindo.com' http://127.0.0.1:8088/assets/frappe/icons/lucide/icons.svg
+# ulang untuk app.oakdepo.com
 
-# cek URL app frontend
-curl -I -H 'Host: app.oakdepo.com' http://127.0.0.1:8088/helpdesk
-curl -I -H 'Host: app.oakdepo.com' http://127.0.0.1:8088/raven
-curl -I -H 'Host: app.oakdepo.com' http://127.0.0.1:8088/g
+# bukti asset sudah materialized (real dir, bukan symlink):
+docker compose -p erp_oak -f docker-compose.prod.yml -f docker-compose.override.prod.yml \
+  exec -T nginx sh -c 'ls -ld /home/frappe/frappe-bench/sites/assets/frappe'
+# harus drwx... (real dir). Kalau lrwx... (symlink) → restart backend untuk trigger materialize,
+# atau jalankan prod-update.sh.
 ```
 
-Catatan route:
+Setelah deploy asset, minta user **hard refresh** (`Ctrl+Shift+R`) — nama bundle ber-hash berubah tiap rebuild.
 
-```text
-Helpdesk  /helpdesk
-Raven     /raven
-Gameplan  /g        # bukan /gameplan
-CRM       /crm      # 403 berarti permission/setup issue, bukan asset/nginx
-```
+#### Update app source baked (frappe/erpnext/hrms/crm/helpdesk/raven/gameplan/telephony)
 
-Setelah deploy asset, minta user hard refresh browser (`Ctrl+F5`) atau enable DevTools → Network → Disable cache → reload.
-
-#### Update app source di prod (container_depot, erpnext_custom, dll.)
-
-Beda dengan dev — di prod **tidak ada bind mount** app. Semua app di-bake ke image lewat `bench get-app` saat build (lihat [Dockerfile](Dockerfile)). Jadi edit kode di folder lokal `container_depot/` (atau app lain) tidak otomatis kepakai di prod sampai image di-rebuild.
-
-Alurnya:
+App inti masih di-bake ke image lewat `bench get-app` (lihat [Dockerfile](Dockerfile)). Untuk app baked, edit lokal
+tidak kepakai sampai image di-rebuild:
 
 ```bash
-# 1. Di mesin dev — push perubahan ke GitHub repo app-nya
-cd container_depot
-git add -A && git commit -m "..." && git push origin main
-
-# 2. Di server prod — rebuild image
-cd /opt/oak_app
-git pull   # opsional, kalau ada perubahan di repo oak_app
-
-# WAJIB --no-cache di stage get-app, karena apps.json tidak berubah →
-# Docker re-use layer lama dan TIDAK pull commit terbaru dari GitHub.
-docker compose -f docker-compose.prod.yml build --no-cache backend
-
-docker compose -f docker-compose.prod.yml up -d
-
-# 3. Migrate kalau ada DocType / fixture / patch baru
-scripts/prod-migrate.sh
+cd /home/apps/erp_oak/cakra-erpnext-docker
+# WAJIB --no-cache di stage get-app: apps.json tidak berubah → Docker re-use layer lama,
+# TIDAK pull commit terbaru dari GitHub.
+scripts/prod-update.sh --pull --build --no-cache
 ```
-
-Kapan butuh apa:
-
-| Jenis perubahan app | Rebuild image | `up -d` | `prod-migrate.sh` |
-| --- | --- | --- | --- |
-| DocType / fixture / patch baru | ✓ (`--no-cache`) | ✓ | ✓ |
-| Logic Python / API / controller | ✓ (`--no-cache`) | ✓ | — |
-| Asset JS/CSS (app ada di `BUILD_APPS`) | ✓ (`--no-cache`) | ✓ | — |
-| Hanya hooks.py / scheduled job | ✓ (`--no-cache`) | ✓ | — (cukup restart, sudah included di `up -d`) |
-
-Catatan: `container_depot` dan `erpnext_custom` defaultnya ada di `SKIP_BUILD_APPS` ([docker-compose.prod.yml:78](docker-compose.prod.yml#L78)) — kalau menambah file di `public/`, pindahkan ke `BUILD_APPS` dulu lewat `.env`.
 
 ### Resource limits (recommended)
 
