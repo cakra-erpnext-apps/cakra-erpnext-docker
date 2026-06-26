@@ -10,11 +10,6 @@
     "branch": "version-16"
   },
   {
-    "name": "erp_cakra",
-    "url": "https://github.com/cakra-erpnext-apps/erp_cakra",
-    "branch": "main"
-  },
-  {
     "name": "crm",
     "url": "https://github.com/cakra-erpnext-apps/crm",
     "branch": "main"

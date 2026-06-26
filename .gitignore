@@ -24,4 +24,10 @@ __pycache__/
 nginx/certs/*.pem
 nginx/certs/*.key
 backups/*
-!backups/.gitkeepapps.json.bak.*
+!backups/.gitkeep
+
+# local backups/scratch from ops scripts
+apps.json.bak.*
+apps.json.tmp
+scripts/*.bak.*
+*.bak.*

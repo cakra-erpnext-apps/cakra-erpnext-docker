@@ -1,0 +1,85 @@
+# docker-compose.override.prod.yml
+# Per-domain custom app bundle (bind-mount model) for stack erp_oak.
+# Bundle repo cloned on host at /home/apps/bundles/erp_cakra (sub-apps: erp, erpnext_custom, assistant, crm_cakra).
+# Each sub-app folder is bind-mounted into apps/<name> for backend + workers + scheduler + websocket.
+# Boot wrapper ensure-bundles.sh runs `pip install -e` + registers apps.txt on every start, then execs the real command.
+# Install to a site is done per-site (NOT here): bench --site app.cakraindo.com install-app <app>.
+# Use with: docker compose -f docker-compose.prod.yml -f docker-compose.override.prod.yml up -d
+#
+# NOTE: nginx is NOT given the bind-mounts — it serves built assets from the bench-sites volume (sites/assets).
+
+x-bundle-mounts: &bundle-mounts
+  - /home/apps/bundles/erp_cakra/erp:/home/frappe/frappe-bench/apps/erp
+  - /home/apps/bundles/erp_cakra/erpnext_custom:/home/frappe/frappe-bench/apps/erpnext_custom
+  - /home/apps/bundles/erp_cakra/assistant:/home/frappe/frappe-bench/apps/assistant
+  - /home/apps/bundles/erp_cakra/crm_cakra:/home/frappe/frappe-bench/apps/crm_cakra
+  - /home/apps/erp_oak/cakra-erpnext-docker/scripts/ensure-bundles.sh:/home/frappe/frappe-bench/ensure-bundles.sh:ro
+  - bench-sites:/home/frappe/frappe-bench/sites
+  - bench-logs:/home/frappe/frappe-bench/logs
+
+x-bundle-env: &bundle-env
+  BUNDLE_APPS: "erp erpnext_custom assistant crm_cakra"
+
+services:
+  backend:
+    environment:
+      <<: *bundle-env
+    volumes: *bundle-mounts
+    command: >
+      bash -c "BUNDLE_APPS='erp erpnext_custom assistant crm_cakra'
+      bash /home/frappe/frappe-bench/ensure-bundles.sh
+      bash -c 'cd /home/frappe/frappe-bench &&
+      ./env/bin/gunicorn
+      --chdir=/home/frappe/frappe-bench/sites
+      --bind=0.0.0.0:8000
+      --threads=4
+      --workers=2
+      --worker-class=gthread
+      --worker-tmp-dir=/dev/shm
+      --timeout=120
+      frappe.app:application'"
+
+  websocket:
+    environment:
+      <<: *bundle-env
+    volumes: *bundle-mounts
+    command: >
+      bash -c "BUNDLE_APPS='erp erpnext_custom assistant crm_cakra'
+      bash /home/frappe/frappe-bench/ensure-bundles.sh
+      bash -c 'cd /home/frappe/frappe-bench && node apps/frappe/socketio.js'"
+
+  queue-short:
+    environment:
+      <<: *bundle-env
+    volumes: *bundle-mounts
+    command: >
+      bash -c "BUNDLE_APPS='erp erpnext_custom assistant crm_cakra'
+      bash /home/frappe/frappe-bench/ensure-bundles.sh
+      bash -c 'cd /home/frappe/frappe-bench && bench worker --queue short'"
+
+  queue-default:
+    environment:
+      <<: *bundle-env
+    volumes: *bundle-mounts
+    command: >
+      bash -c "BUNDLE_APPS='erp erpnext_custom assistant crm_cakra'
+      bash /home/frappe/frappe-bench/ensure-bundles.sh
+      bash -c 'cd /home/frappe/frappe-bench && bench worker --queue default'"
+
+  queue-long:
+    environment:
+      <<: *bundle-env
+    volumes: *bundle-mounts
+    command: >
+      bash -c "BUNDLE_APPS='erp erpnext_custom assistant crm_cakra'
+      bash /home/frappe/frappe-bench/ensure-bundles.sh
+      bash -c 'cd /home/frappe/frappe-bench && bench worker --queue long'"
+
+  scheduler:
+    environment:
+      <<: *bundle-env
+    volumes: *bundle-mounts
+    command: >
+      bash -c "BUNDLE_APPS='erp erpnext_custom assistant crm_cakra'
+      bash /home/frappe/frappe-bench/ensure-bundles.sh
+      bash -c 'cd /home/frappe/frappe-bench && bench schedule'"
