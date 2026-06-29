@@ -98,12 +98,14 @@ if [[ "$PULL_BUNDLES" == "1" ]]; then
 fi
 
 if [[ "$DO_BUILD" == "1" ]]; then
+  # Only configurator has the build: block, but all runtime services share
+  # image cakra-erpnext:prod. Build configurator to refresh that shared image.
   if [[ "$NO_CACHE" == "1" ]]; then
-    run dc build --no-cache backend
+    run dc build --no-cache configurator
   else
-    run dc build backend
+    run dc build configurator
   fi
-  run dc up -d
+  run dc up -d --force-recreate backend websocket queue-short queue-default queue-long scheduler configurator
 fi
 
 # Update each site with its OWN derived app set.
