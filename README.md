@@ -607,20 +607,29 @@ Pakai satu script. Sudah ditulis ulang untuk 2-file compose + multi-site + per-s
 ```bash
 cd /home/apps/erp_oak/cakra-erpnext-docker
 
-# update semua site (cakraindo + oakdepo), pull repo + bundle, backup dulu:
+# update semua site (cakraindo + oakdepo + oakglobalmaritim), pull repo + bundle, backup dulu:
 scripts/prod-update.sh --pull --pull-bundles --backup
 
 # satu site saja:
-scripts/prod-update.sh --sites "app.cakraindo.com" --backup
+scripts/prod-update.sh --sites "app.oakglobalmaritim.com" --backup
 
 # kalau perlu rebuild image baked (frappe/erpnext/hrms/crm/helpdesk/raven/dll berubah):
 scripts/prod-update.sh --pull --build            # atau --build --no-cache
 ```
 
+
+Default site produksi yang ikut `scripts/prod-update.sh`:
+
+```text
+app.cakraindo.com
+app.oakdepo.com
+app.oakglobalmaritim.com
+```
+
 Yang dilakukan `prod-update.sh` per site:
 
 1. `bench --site <site> migrate`
-2. **derive `BUILD_APPS` otomatis dari `bench list-apps`** site itu — cakraindo & oakdepo punya app set
+2. **derive `BUILD_APPS` otomatis dari `bench list-apps`** site itu — cakraindo, oakdepo, dan oakglobalmaritim punya app set
    berbeda, jadi tidak ada satu daftar global. Anti-drift saat app ditambah/dihapus.
 3. `build-assets.sh` dengan `MATERIALIZE_ASSETS=1` (build + materialize asset jadi file nyata)
 4. `clear-cache` + `clear-website-cache`
@@ -641,7 +650,8 @@ git -C /home/apps/bundles/erp_cakra pull --ff-only
 
 # 2. migrate + build + materialize + restart (otomatis lewat helper)
 cd /home/apps/erp_oak/cakra-erpnext-docker
-scripts/prod-update.sh --backup           # atau tambah --sites "app.cakraindo.com"
+scripts/prod-update.sh --backup           # semua site default
+scripts/prod-update.sh --backup --sites "app.oakglobalmaritim.com"  # satu site
 ```
 
 `scripts/prod-update.sh --pull-bundles` melakukan langkah 1 untukmu (`BUNDLE_DIR` default
@@ -669,7 +679,7 @@ Verifikasi asset dari server:
 curl -I -H 'Host: app.cakraindo.com' http://127.0.0.1:8088/api/method/ping
 curl -I -H 'Host: app.cakraindo.com' http://127.0.0.1:8088/login
 curl -I -H 'Host: app.cakraindo.com' http://127.0.0.1:8088/assets/frappe/icons/lucide/icons.svg
-# ulang untuk app.oakdepo.com
+# ulang untuk app.oakdepo.com dan app.oakglobalmaritim.com
 
 # bukti asset sudah materialized (real dir, bukan symlink):
 docker compose -p erp_oak -f docker-compose.prod.yml -f docker-compose.override.prod.yml \

@@ -8,6 +8,7 @@
 #   - MULTIPLE sites, each with a DIFFERENT app set:
 #       app.cakraindo.com : ... erp erpnext_custom assistant crm_cakra
 #       app.oakdepo.com   : ... container_depot crm erp_cmi cmi_agents erpnext_custom
+#       app.oakglobalmaritim.com : ... erp erpnext_custom assistant crm_cakra
 #     => a single global BUILD_APPS is WRONG. We auto-derive the buildable app set
 #        per-site from `bench list-apps`, so it never drifts when apps are added/removed.
 #   - nginx mounts ONLY sites/ (not apps/). Assets MUST be materialized (real files,
@@ -25,7 +26,7 @@ PROJECT_NAME="${COMPOSE_PROJECT_NAME:-erp_oak}"
 COMPOSE_PROD="${COMPOSE_PROD:-docker-compose.prod.yml}"
 COMPOSE_OVERRIDE="${COMPOSE_OVERRIDE:-docker-compose.override.prod.yml}"
 # space-separated list of sites to update; default = both known prod sites.
-SITES="${SITES:-app.cakraindo.com app.oakdepo.com}"
+SITES="${SITES:-app.cakraindo.com app.oakdepo.com app.oakglobalmaritim.com}"
 # apps that are never frontend-buildable / should be skipped during bench build.
 SKIP_BUILD_APPS="${SKIP_BUILD_APPS:-}"
 RESTART_SERVICES="${RESTART_SERVICES:-backend websocket queue-short queue-default queue-long scheduler nginx}"
