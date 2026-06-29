@@ -3,6 +3,7 @@
 # Bundle repo cloned on host at /home/apps/bundles/erp_cakra (sub-apps: erp, erpnext_custom, assistant, crm_cakra).
 # Each sub-app folder is bind-mounted into apps/<name> for backend + workers + scheduler + websocket.
 # Boot wrapper ensure-bundles.sh runs `pip install -e` + registers apps.txt on every start, then execs the real command.
+# Configurator also receives the same mounts so migrate sees bind-mounted apps (not stale baked copies).
 # Install to a site is done per-site (NOT here): bench --site app.cakraindo.com install-app <app>.
 # Use with: docker compose -f docker-compose.prod.yml -f docker-compose.override.prod.yml up -d
 #
@@ -21,6 +22,15 @@ x-bundle-env: &bundle-env
   BUNDLE_APPS: "erp erpnext_custom assistant crm_cakra"
 
 services:
+  configurator:
+    environment:
+      <<: *bundle-env
+    volumes: *bundle-mounts
+    command: >
+      bash -c "BUNDLE_APPS='erp erpnext_custom assistant crm_cakra'
+      bash /home/frappe/frappe-bench/ensure-bundles.sh
+      bash -c 'init-site.sh build-assets.sh && echo configured'"
+
   backend:
     environment:
       <<: *bundle-env
