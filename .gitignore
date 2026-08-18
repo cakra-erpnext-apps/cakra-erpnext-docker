@@ -11,10 +11,15 @@ helpdesk/
 raven/
 gameplan/
 telephony/
-erpnext_custom/
 container_depot/
 customer_oak/
 reference/
+
+# repo app terpisah yang di-clone di sini — bukan bagian dari repo ini,
+# dan tanpa ini `git add -A` akan membuat gitlink ke dalamnya.
+erpnext_custom/
+erp_cakra/
+erp_oakdepo/
 
 sites/
 logs/

@@ -39,7 +39,6 @@ helpdesk/
 raven/
 gameplan/
 telephony/
-erpnext_custom/
 ```
 
 Semua app diambil dari GitHub melalui `apps.json`.
@@ -60,7 +59,6 @@ Branch yang disarankan:
 frappe          version-16
 erpnext         version-16
 hrms            version-16
-erpnext_custom  main
 crm             main
 helpdesk        main
 raven           main
@@ -85,11 +83,6 @@ telephony       develop
     "name": "hrms",
     "url": "https://github.com/cakra-erpnext-apps/hrms",
     "branch": "version-16"
-  },
-  {
-    "name": "erpnext_custom",
-    "url": "https://github.com/cakra-erpnext-apps/erpnext_custom",
-    "branch": "main"
   },
   {
     "name": "crm",
@@ -135,10 +128,9 @@ MYSQL_ROOT_PASSWORD=123
 FRAPPE_REPO=https://github.com/cakra-erpnext-apps/frappe
 FRAPPE_BRANCH=version-16
 
-INSTALL_APPS=erpnext,hrms,erpnext_custom,crm,helpdesk,raven,gameplan,telephony
+INSTALL_APPS=erpnext,hrms,crm,helpdesk,raven,gameplan,telephony
 
 BUILD_APPS=frappe,erpnext,hrms,crm,helpdesk,raven,gameplan,telephony
-SKIP_BUILD_APPS=erpnext_custom
 ASSET_STRICT=0
 
 # Hanya dipakai di docker-compose.dev.yml.
@@ -155,12 +147,12 @@ INSTALL_APPS = app yang dipasang ke site Frappe
 BUILD_APPS   = app yang CSS/JS assets-nya dibuild
 ```
 
-`erpnext_custom` tetap bisa di-install, tetapi tidak perlu asset build jika app tersebut tidak punya frontend asset sendiri.
+App tetap bisa di-install tanpa masuk `BUILD_APPS`, selama app tersebut tidak punya frontend asset sendiri.
 
 Jika ada app yang error saat asset build, tambahkan ke `SKIP_BUILD_APPS`.
 
 ```env
-SKIP_BUILD_APPS=erpnext_custom,telephony
+SKIP_BUILD_APPS=nama_app
 ```
 
 ---
@@ -246,7 +238,6 @@ App yang aktif dikembangkan di-mount langsung dari host ke dalam container, sehi
 
 ```yaml
 volumes:
-  - ./erpnext_custom:/home/frappe/frappe-bench/apps/erpnext_custom
   - ./container_depot:/home/frappe/frappe-bench/apps/container_depot
 ```
 
@@ -272,7 +263,7 @@ Container jalan sebagai user `frappe` (UID 1000). Pada WSL2 user host biasanya j
 
 ### Asset build untuk app yang di-mount
 
-`erpnext_custom` dan `container_depot` ada di `SKIP_BUILD_APPS` di `.env`. Selama belum ada JS/CSS baru, ini aman. Begitu menambah file di `<app>/public/`, hapus app tersebut dari `SKIP_BUILD_APPS` dan tambahkan ke `BUILD_APPS` supaya bundle ikut ter-build.
+`container_depot` tidak ada di `BUILD_APPS`. Selama belum ada JS/CSS baru, ini aman. Begitu menambah file di `container_depot/public/`, tambahkan app tersebut ke `BUILD_APPS` supaya bundle ikut ter-build.
 
 ---
 
@@ -285,7 +276,7 @@ scripts/migrate.sh           bench migrate + clear-cache + clear-website-cache
 scripts/restart.sh           docker compose restart frappe
 scripts/shell.sh             masuk container (exec kalau running, run --rm kalau tidak)
 scripts/logs.sh [service]    tail logs, default service = frappe
-scripts/test.sh [app]        bench run-tests + clear-cache + clear-website-cache, default app = erpnext_custom
+scripts/test.sh [app]        bench run-tests + clear-cache + clear-website-cache, default app = container_depot
 ```
 
 `migrate.sh` dan `test.sh` selalu menutup dengan `clear-cache` dan `clear-website-cache`. Ini belt-and-suspenders untuk shared `assets_json` cache di Redis: kalau ada yang mematikan `developer_mode` di dev, bug 404 bundle (lihat troubleshooting) tidak akan terjadi.
@@ -328,11 +319,11 @@ Tunggu sampai `bench start` jalan dan ada output dari `watch`, `socketio`, dan `
 
 ```bash
 scripts/shell.sh
-ls -la apps/erpnext_custom/
+ls -la apps/container_depot/
 exit
 ```
 
-Isi folder harus sama persis dengan folder host (ada `pyproject.toml`, `erpnext_custom.egg-info`, dll.).
+Isi folder harus sama persis dengan folder host (ada `pyproject.toml`, `container_depot.egg-info`, dll.).
 
 Test reload: edit satu file Python di host (misal tambah `print("hello")` di sebuah API endpoint), trigger endpoint tersebut, dan `print` harus muncul di `scripts/logs.sh` tanpa rebuild image.
 
@@ -341,7 +332,6 @@ Test reload: edit satu file Python di host (misal tambah `print("hello")` di seb
 Buka [http://127.0.0.1:8000](http://127.0.0.1:8000), login `Administrator` / `ADMIN_PASSWORD`. Pastikan:
 
 ```text
-erpnext_custom DocTypes muncul
 container_depot module muncul di Module List
 ```
 
@@ -836,7 +826,7 @@ ASSET_STRICT=1 build-assets.sh
 
 ## Update App Source
 
-### App yang di-mount (erpnext_custom, container_depot)
+### App yang di-mount (container_depot)
 
 Edit di host langsung kepakai. Setelah `git pull` di folder app:
 
@@ -865,7 +855,7 @@ Volume `bench-sites` tidak terhapus, jadi database dan site aman.
 Dockerfile berubah                          rebuild
 apps.json tambah/hapus app                  rebuild
 Ganti branch frappe / erpnext / dll.        rebuild
-Edit kode di erpnext_custom / container_depot   TIDAK perlu rebuild
+Edit kode di container_depot                TIDAK perlu rebuild
 ```
 
 ---
@@ -980,11 +970,11 @@ Biasanya karena folder `sites/` tertutup Docker volume. `init-site.sh` harus reg
 
 ### `NoneType object is not subscriptable` saat install custom app
 
-Pastikan `erpnext_custom/hooks.py` punya metadata minimal:
+Pastikan `<app>/hooks.py` punya metadata minimal:
 
 ```python
-app_name = "erpnext_custom"
-app_title = "ERPNext Custom"
+app_name = "<app>"
+app_title = "App Title"
 app_publisher = "Cakra ERPNext Apps"
 app_description = "Customizations for ERPNext"
 app_email = "admin@example.com"
@@ -998,7 +988,7 @@ required_apps = ["frappe", "erpnext", "hrms"]
 Jika app tertentu gagal saat asset build, tambahkan ke:
 
 ```env
-SKIP_BUILD_APPS=erpnext_custom,nama_app
+SKIP_BUILD_APPS=nama_app
 ```
 
 Jika ingin build gagal membuat container stop, gunakan:
@@ -1061,7 +1051,6 @@ helpdesk/
 raven/
 gameplan/
 telephony/
-erpnext_custom/
 
 sites/
 logs/

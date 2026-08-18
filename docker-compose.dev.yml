@@ -43,14 +43,13 @@ services:
       SOCKETIO_PORT: 9000
       DEVELOPER_MODE: ${DEVELOPER_MODE:-1}
 
-      INSTALL_APPS: ${INSTALL_APPS:-erpnext,hrms,erpnext_custom,crm,helpdesk,raven,gameplan,telephony}
+      INSTALL_APPS: ${INSTALL_APPS:-erpnext,hrms,crm,helpdesk,raven,gameplan,telephony}
       BUILD_APPS: ${BUILD_APPS:-frappe,erpnext,hrms,crm,helpdesk,raven,gameplan,telephony}
-      SKIP_BUILD_APPS: ${SKIP_BUILD_APPS:-erpnext_custom}
+      SKIP_BUILD_APPS: ${SKIP_BUILD_APPS}
       ASSET_STRICT: ${ASSET_STRICT:-0}
     volumes:
       - bench-sites:/home/frappe/frappe-bench/sites
       - bench-logs:/home/frappe/frappe-bench/logs
-      - ./erpnext_custom:/home/frappe/frappe-bench/apps/erpnext_custom
       - ./container_depot:/home/frappe/frappe-bench/apps/container_depot
     ports:
       - "8000:8000"
